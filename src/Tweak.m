@@ -178,6 +178,8 @@ static BOOL DYFSIsLivePreStreamContext(UIView *view) {
     return NO;
 }
 
+static UIViewController *DYFSActiveTopViewController(void);
+
 static BOOL DYFSIsLivePreStreamPlayer(id playerController) {
     if (!playerController) return NO;
 
@@ -196,7 +198,19 @@ static BOOL DYFSIsLivePreStreamPlayer(id playerController) {
                 return YES;
             }
         }
-        return DYFSIsLivePreStreamContext(((UIViewController *)playerController).view);
+        if (DYFSIsLivePreStreamContext(((UIViewController *)playerController).view)) return YES;
+    }
+
+    // Some Douyin builds host the preview player in a sibling controller rather
+    // than making it a child of the pre-stream controller. Protect it based on
+    // the active screen as well, so the player height hook cannot pull it off-center.
+    UIViewController *active = DYFSActiveTopViewController();
+    for (NSUInteger depth = 0; active && depth < 20; depth++, active = active.parentViewController) {
+        NSString *name = NSStringFromClass(active.class);
+        if ([name containsString:@"AWELiveNewPreStreamViewController"] ||
+            [name containsString:@"AWELivePreStream"]) {
+            return YES;
+        }
     }
 
     return NO;
