@@ -72,10 +72,6 @@ static BOOL DYFSInstallHook(Class cls, SEL selector, IMP replacement, IMP *origi
 
 
 
-static NSUInteger DYFSLayoutHookCount(void) {
-    return DYFSInstalledFeed ? 1 : 0;
-}
-
 static NSUInteger DYFSSidebarHookCount(void) {
     return (DYFSInstalledSidebarIcon ? 1 : 0) + (DYFSInstalledSidebarRight ? 1 : 0);
 }
@@ -98,12 +94,13 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n底栏透明 Hook：%lu/2\n进度容器透明 Hook：%@\n设置入口 Hook：%lu/2\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\nDY.FullScreen 不调整点赞、评论、分享等功能区的位置或高度；这部分由 DYYY 管理。编译通过只代表构建成功，仍需在实机检查视觉效果。",
+        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n底栏透明 Hook：%lu/2\n进度容器透明 Hook：%@\n侧边栏入口 Hook：%lu/2\n全屏入口按钮：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n请在抖音首页左侧边栏的系统“设置”图标附近寻找“全屏”按钮，点开后才会显示全屏总开关。点赞、评论、分享等功能区的位置和高度由 DYYY 管理。编译成功后仍需在实机确认入口显示。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
         (unsigned long)DYFSTabBarHookCount(),
         DYFSInstalledProgressContainer ? @"已安装" : @"未找到类",
         (unsigned long)DYFSSidebarHookCount(),
+        DYFSSettingsEntryVisible ? @"已挂载" : @"未找到设置图标",
         DYFSLastHomeTabSelected ? @"是" : @"否",
         DYFSLastTabBackgroundHidden ? @"是" : @"否",
         (unsigned long)DYFSTabBarApplyCount,
@@ -267,50 +264,102 @@ static void DYFSOpenSettings(id sender) {
     });
 }
 
-static void DYFSInstallSettingsEntry(UIView *settingsIcon) {
-    if (!settingsIcon || ![settingsIcon.accessibilityLabel isEqualToString:@"设置"]) return;
-    UIView *targetSuperView = settingsIcon.superview.superview.superview ?: settingsIcon.superview ?: settingsIcon;
-    UIButton *oldButton = (UIButton *)[targetSuperView viewWithTag:420740];
-    if (oldButton) {
-        DYFSSettingsEntryVisible = YES;
-        return;
+static BOOL DYFSViewHasSettingsLabel(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+
+    if ([view.accessibilityLabel isEqualToString:@"设置"]) return YES;
+    if ([view isKindOfClass:UILabel.class] &&
+        [((UILabel *)view).text isEqualToString:@"设置"]) return YES;
+    if ([view isKindOfClass:UIButton.class]) {
+        NSString *title = [((UIButton *)view) titleForState:UIControlStateNormal];
+        if ([title isEqualToString:@"设置"]) return YES;
     }
 
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    button.tag = 420740;
-    button.accessibilityLabel = @"DY.FullScreen 设置入口";
+    for (UIView *subview in [view.subviews copy]) {
+        if (DYFSViewHasSettingsLabel(subview, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+static BOOL DYFSIsSidebarSettingsClass(UIView *view) {
+    NSString *name = NSStringFromClass(view.class);
+    return [name isEqualToString:@"AWELeftSideBarTopIconHorizontalView"] ||
+           [name isEqualToString:@"AWELeftSideBarTopRightLayoutView"];
+}
+
+static void DYFSInstallSettingsEntry(UIView *settingsIcon) {
+    // Douyin may expose "设置" on the icon itself or on one of its child views.
+    if (!settingsIcon || !DYFSViewHasSettingsLabel(settingsIcon, 0)) return;
+
+    UIView *targetSuperView = settingsIcon.superview.superview.superview ?: settingsIcon.superview ?: settingsIcon;
+    if (!targetSuperView) return;
+
+    UIButton *button = (UIButton *)[targetSuperView viewWithTag:420740];
+    if (![button isKindOfClass:UIButton.class]) button = nil;
+
+    // Convert the anchor's bounds into the coordinate space of the actual
+    // superview that will contain the button; using settingsIcon.frame directly
+    // here mixes coordinate systems and can place the entry off-screen.
+    CGRect anchorFrame = [settingsIcon convertRect:settingsIcon.bounds toView:targetSuperView];
+    CGFloat buttonWidth = 60.0;
+    CGFloat buttonHeight = 32.0;
+    CGFloat availableWidth = CGRectGetWidth(targetSuperView.bounds);
+    CGFloat availableHeight = CGRectGetHeight(targetSuperView.bounds);
+
+    CGFloat x = CGRectGetMaxX(anchorFrame) + 6.0;
+    if (availableWidth > buttonWidth && x + buttonWidth > availableWidth - 4.0) {
+        x = CGRectGetMinX(anchorFrame) - buttonWidth - 6.0;
+    }
+    if (availableWidth > buttonWidth) {
+        x = MIN(MAX(4.0, x), availableWidth - buttonWidth - 4.0);
+    } else {
+        x = MAX(4.0, CGRectGetMaxX(anchorFrame) + 6.0);
+    }
+
+    CGFloat y = CGRectGetMidY(anchorFrame) - buttonHeight / 2.0;
+    if (availableHeight > buttonHeight) {
+        y = MIN(MAX(4.0, y), availableHeight - buttonHeight - 4.0);
+    } else {
+        y = 8.0;
+    }
+
+    if (!button) {
+        button = [UIButton buttonWithType:UIButtonTypeSystem];
+        button.tag = 420740;
+        button.accessibilityLabel = @"DY.FullScreen 设置入口";
+        button.backgroundColor = [UIColor colorWithWhite:0.5 alpha:0.16];
+        button.layer.cornerRadius = 8.0;
+        button.clipsToBounds = YES;
+        [button addTarget:[DYFSSettingsActionTarget sharedTarget]
+                   action:@selector(openSettings:)
+         forControlEvents:UIControlEventTouchUpInside];
+        [targetSuperView addSubview:button];
+    }
+
     [button setTitle:@"全屏" forState:UIControlStateNormal];
     [button setTitleColor:UIColor.labelColor forState:UIControlStateNormal];
     button.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-    button.backgroundColor = [UIColor colorWithWhite:0.5 alpha:0.12];
-    button.layer.cornerRadius = 8.0;
-    button.clipsToBounds = YES;
-    CGRect frame = settingsIcon.frame;
-    button.frame = CGRectMake(frame.origin.x + frame.size.width - 40.0 - 2.0, 8.0, 60.0, 32.0);
+    button.frame = CGRectMake(x, y, buttonWidth, buttonHeight);
     button.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    [button addTarget:[DYFSSettingsActionTarget sharedTarget]
-               action:@selector(openSettings:)
-     forControlEvents:UIControlEventTouchUpInside];
-    [targetSuperView addSubview:button];
+
     DYFSSettingsEntryVisible = YES;
-    DYFSLog(@"installed DY.FullScreen button next to Douyin Settings");
+    DYFSLog([NSString stringWithFormat:@"mounted DY.FullScreen entry (parent %.0fx%.0f, frame %@)",
+            availableWidth, availableHeight, NSStringFromCGRect(button.frame)]);
 }
 
 static void DYFSScanForSettingsEntry(UIView *root, NSUInteger depth) {
     if (!root || depth > 18 || DYFSSettingsEntryVisible) return;
-    NSString *className = NSStringFromClass(root.class);
-    if (([className isEqualToString:@"AWELeftSideBarTopIconHorizontalView"] ||
-         [className isEqualToString:@"AWELeftSideBarTopRightLayoutView"]) &&
-        [root.accessibilityLabel isEqualToString:@"设置"]) {
+
+    if (DYFSIsSidebarSettingsClass(root) && DYFSViewHasSettingsLabel(root, 0)) {
         DYFSInstallSettingsEntry(root);
         if (DYFSSettingsEntryVisible) return;
     }
+
     for (UIView *subview in [root.subviews copy]) {
         DYFSScanForSettingsEntry(subview, depth + 1);
         if (DYFSSettingsEntryVisible) return;
     }
 }
-
 
 static id DYFSSafeValueForKey(id object, NSString *key) {
     if (!object || key.length == 0) return nil;
@@ -462,11 +511,10 @@ static void DYFSInstallHooks(void) {
     }
 
 
-    if (!DYFSSettingsEntryVisible) {
-        for (UIWindow *window in UIApplication.sharedApplication.windows) {
-            DYFSScanForSettingsEntry(window, 0);
-            if (DYFSSettingsEntryVisible) break;
-        }
+    DYFSSettingsEntryVisible = NO;
+    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+        DYFSScanForSettingsEntry(window, 0);
+        if (DYFSSettingsEntryVisible) break;
     }
 
     cls = NSClassFromString(@"AWENormalModeTabBar");
