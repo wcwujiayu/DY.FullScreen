@@ -38,6 +38,7 @@ static BOOL DYFSSchedulePending = NO;
 static NSUInteger DYFSLayoutFixCount = 0;
 static NSUInteger DYFSInteractionContainerAdjustCount = 0;
 static NSUInteger DYFSPlayerContentAdjustCount = 0;
+static NSUInteger DYFSLivePreviewPlayerAdjustCount = 0;
 static NSUInteger DYFSTabBarApplyCount = 0;
 static NSUInteger DYFSCommentBarTransparencyApplyCount = 0;
 static BOOL DYFSLastHomeTabSelected = NO;
@@ -143,13 +144,13 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播预览原位保护：%@\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n设置项名称为“首页全屏 / 胖胖专属”。普通视频与图集全屏独立调整；直播预览不做尺寸/位移修改，避免视频、文案与“点击进入直播间”错位。评论页面底部输入栏背景透明处理次数：%lu。",
+        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n推流预览播放器调整次数：%lu\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n设置项名称为“首页全屏 / 胖胖专属”。普通视频与图集全屏独立调整；推流预览仅在播放器容器匹配高度条件时调整视频画面，不平移覆盖文案和按钮。评论页面底部输入栏背景透明处理次数：%lu。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
         DYFSInstalledInteractionController ? @"已安装" : @"未找到类",
         (unsigned long)DYFSInteractionContainerAdjustCount,
         (unsigned long)DYFSPlayerContentAdjustCount,
-        DYFSInstalledLiveStack ? @"已安装（不移位）" : @"未找到类",
+        (unsigned long)DYFSLivePreviewPlayerAdjustCount,
         (unsigned long)DYFSTabBarHookCount(),
         (unsigned long)DYFSSidebarHookCount(),
         DYFSSettingsEntryVisible ? @"已挂载" : @"未找到侧边栏设置图标",
@@ -894,10 +895,14 @@ static void DYFSApplyPlayerContentHeightNow(id playerController) {
 
     UIView *controllerView = [playerController isKindOfClass:UIViewController.class]
         ? ((UIViewController *)playerController).view : nil;
-    if (DYFSIsLivePreStreamPlayer(playerController) || DYFSIsLivePreStreamContext(controllerView)) return;
+    // Unlike an active live room, the pre-stream preview is a screen that the
+    // user explicitly wants adjusted. Some builds host its player in a sibling
+    // controller, so use the active pre-stream context as a positive match too.
+    BOOL isLivePreStream = DYFSIsLivePreStreamPlayer(playerController) ||
+        DYFSIsLivePreStreamContext(controllerView);
 
     UIView *contentView = DYFSSafeValueForKey(playerController, @"contentView");
-    if (DYFSIsLivePreStreamContext(contentView)) return;
+    if (DYFSIsLivePreStreamContext(contentView)) isLivePreStream = YES;
     if (DYFSInProfileContext(controllerView) || DYFSInProfileContext(contentView) ||
         DYFSIsDetailVideoContext(controllerView) || DYFSIsDetailVideoContext(contentView)) {
         DYFSApplyVideoDetailBottomTransparencyInView(controllerView);
@@ -931,8 +936,10 @@ static void DYFSApplyPlayerContentHeightNow(id playerController) {
     frame.size.height = targetHeight;
     contentView.frame = frame;
     DYFSPlayerContentAdjustCount++;
+    if (isLivePreStream) DYFSLivePreviewPlayerAdjustCount++;
     DYFSLog([NSString stringWithFormat:
-        @"%@ contentView height %.2f -> %.2f (parent %.2f, diff %.2f, tab bar %.2f)",
+        @"%@%@ contentView height %.2f -> %.2f (parent %.2f, diff %.2f, tab bar %.2f)",
+        isLivePreStream ? @"pre-stream " : @"",
         NSStringFromClass([playerController class]), currentHeight, targetHeight, parentHeight, diff, tabBarHeight]);
 }
 
