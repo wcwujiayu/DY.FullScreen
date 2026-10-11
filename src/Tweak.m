@@ -27,6 +27,9 @@ static BOOL DYFSStartupRelayoutScheduled = NO;
 static BOOL DYFSInstalledInteractionProgress = NO;
 static BOOL DYFSInstalledPlayerProgress = NO;
 static BOOL DYFSInstalledCommentPanel = NO;
+static BOOL DYFSInstalledCommentInputContainer = NO;
+static BOOL DYFSInstalledCommentInputBackground = NO;
+static BOOL DYFSInstalledCommentInputController = NO;
 static BOOL DYFSInstalledNativeSettingsSwitch = NO;
 static BOOL DYFSNativeSettingsRowAdded = NO;
 static NSUInteger DYFSInstallAttempts = 0;
@@ -59,6 +62,9 @@ static IMP DYFSOriginalMixPanelDetailLayout = NULL;
 static IMP DYFSOriginalInteractionProgressLayout = NULL;
 static IMP DYFSOriginalPlayerProgressLayout = NULL;
 static IMP DYFSOriginalCommentPanelLayout = NULL;
+static IMP DYFSOriginalCommentInputContainerLayout = NULL;
+static IMP DYFSOriginalCommentInputBackgroundLayout = NULL;
+static IMP DYFSOriginalCommentInputControllerLayout = NULL;
 static char kDYFSPlayerLayoutPendingKey;
 static char kDYFSPlayerParentHeightKey;
 static char kDYFSPlayerSettledGeometryKey;
@@ -526,28 +532,39 @@ static CGFloat DYFSBottomTabBarHeight(UIView *view) {
 
 static NSString *DYFSVisibleTextForView(UIView *view) {
     if (!view) return @"";
+    NSString *text = @"";
     if ([view isKindOfClass:UILabel.class]) {
         UILabel *label = (UILabel *)view;
-        return label.attributedText.string ?: label.text ?: label.accessibilityLabel ?: @"";
-    }
-    if ([view isKindOfClass:UITextField.class]) {
+        text = label.attributedText.string ?: label.text ?: @"";
+    } else if ([view isKindOfClass:UITextField.class]) {
         UITextField *field = (UITextField *)view;
-        return field.placeholder ?: field.text ?: field.accessibilityLabel ?: @"";
+        text = field.placeholder ?: field.text ?: @"";
+    } else if ([view isKindOfClass:UITextView.class]) {
+        text = ((UITextView *)view).text ?: @"";
+    } else if ([view isKindOfClass:UIButton.class]) {
+        text = [((UIButton *)view) titleForState:UIControlStateNormal] ?: @"";
     }
-    if ([view isKindOfClass:UITextView.class]) {
-        UITextView *textView = (UITextView *)view;
-        return textView.text ?: textView.accessibilityLabel ?: @"";
+    if (text.length == 0) text = view.accessibilityLabel ?: @"";
+    if (text.length == 0) text = view.accessibilityValue ?: @"";
+    if (text.length == 0) {
+        id value = DYFSSafeValueForKey(view, @"text");
+        if ([value isKindOfClass:NSString.class]) text = value;
+        if (text.length == 0) {
+            id attributed = DYFSSafeValueForKey(view, @"attributedText");
+            if ([attributed respondsToSelector:@selector(string)]) {
+                id string = ((id (*)(id, SEL))objc_msgSend)(attributed, @selector(string));
+                if ([string isKindOfClass:NSString.class]) text = string;
+            }
+        }
     }
-    if ([view isKindOfClass:UIButton.class]) {
-        UIButton *button = (UIButton *)view;
-        return [button titleForState:UIControlStateNormal] ?: button.accessibilityLabel ?: @"";
-    }
-    return view.accessibilityLabel ?: @"";
+    return text ?: @"";
 }
 
 static BOOL DYFSIsRecommendationBoxLabel(UIView *view) {
     NSString *text = DYFSVisibleTextForView(view);
-    return [text containsString:@"相关搜索"] || [text containsString:@"合集"];
+    return [text containsString:@"相关搜索"] ||
+           ([text containsString:@"相关"] && [text containsString:@"搜索"]) ||
+           [text containsString:@"合集"] || [text containsString:@"视频合集"];
 }
 
 static BOOL DYFSViewContainsControl(UIView *view, NSUInteger depth) {
@@ -556,11 +573,26 @@ static BOOL DYFSViewContainsControl(UIView *view, NSUInteger depth) {
     if ([view isKindOfClass:UIControl.class] ||
         [name containsString:@"GeneralButton"] ||
         [name containsString:@"PlusButton"] ||
-        [name containsString:@"Button"]) {
-        return YES;
-    }
+        [name containsString:@"Button"]) return YES;
     for (UIView *subview in view.subviews) {
         if (DYFSViewContainsControl(subview, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+static BOOL DYFSViewContainsRelevantText(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+    NSString *name = NSStringFromClass(view.class);
+    NSString *text = DYFSVisibleTextForView(view);
+    if (text.length > 0 &&
+        ([view isKindOfClass:UILabel.class] || [view isKindOfClass:UITextField.class] ||
+         [view isKindOfClass:UITextView.class] || [name containsString:@"VirtualLabel"] ||
+         [name containsString:@"TextLabel"] || [text containsString:@"相关搜索"] ||
+         [text containsString:@"合集"] || [text containsString:@"爱评论"] ||
+         [text containsString:@"评论"] || [text containsString:@"搜索"] ||
+         [text containsString:@"输入"])) return YES;
+    for (UIView *subview in view.subviews) {
+        if (DYFSViewContainsRelevantText(subview, depth + 1)) return YES;
     }
     return NO;
 }
@@ -569,42 +601,88 @@ static BOOL DYFSIsBackgroundChrome(UIView *view) {
     if (!view) return NO;
     NSString *name = NSStringFromClass(view.class);
     return [view isKindOfClass:UIVisualEffectView.class] ||
-           [name containsString:@"Background"] ||
-           [name containsString:@"Backdrop"] ||
-           [name containsString:@"Blur"] ||
+           [name containsString:@"Background"] || [name containsString:@"Backdrop"] ||
+           [name containsString:@"Blur"] || [name containsString:@"BackPlate"] ||
+           [name containsString:@"Material"] || [name containsString:@"Gradient"] ||
            [name isEqualToString:@"_UIBarBackground"];
+}
+
+static void DYFSClearViewBackgroundOnly(UIView *view) {
+    if (!view) return;
+    view.backgroundColor = UIColor.clearColor;
+    view.layer.backgroundColor = UIColor.clearColor.CGColor;
+    view.opaque = NO;
+    // Text attributes, alpha, icons, interaction state, frame and transforms remain untouched.
 }
 
 static void DYFSClearSmallCardChrome(UIView *card, NSUInteger depth) {
     if (!card || depth > 8) return;
-    card.backgroundColor = UIColor.clearColor;
-    card.layer.backgroundColor = UIColor.clearColor.CGColor;
-
+    DYFSClearViewBackgroundOnly(card);
     CGFloat cardWidth = CGRectGetWidth(card.bounds);
     CGFloat cardHeight = CGRectGetHeight(card.bounds);
     for (UIView *subview in [card.subviews copy]) {
-        if (DYFSIsBackgroundChrome(subview)) {
-            subview.hidden = YES;
-            continue;
-        }
-
         CGRect rect = [subview convertRect:subview.bounds toView:card];
+        CGFloat width = CGRectGetWidth(rect);
+        CGFloat height = CGRectGetHeight(rect);
         BOOL fillsCard = cardWidth > 0.0 && cardHeight > 0.0 &&
-            CGRectGetWidth(rect) >= cardWidth * 0.82 &&
-            CGRectGetHeight(rect) >= cardHeight * 0.68;
-        if ([subview isMemberOfClass:UIView.class] &&
-            fillsCard && !DYFSViewContainsControl(subview, 0)) {
+            width >= cardWidth * 0.82 && height >= cardHeight * 0.68;
+        BOOL containsControl = DYFSViewContainsControl(subview, 0);
+        BOOL containsText = DYFSViewContainsRelevantText(subview, 0);
+        BOOL genericBacking = [subview isMemberOfClass:UIView.class] ||
+            [subview isKindOfClass:UIImageView.class] ||
+            [subview isKindOfClass:UIVisualEffectView.class] ||
+            DYFSIsBackgroundChrome(subview);
+        if (fillsCard && !containsControl && !containsText && genericBacking) {
             subview.hidden = YES;
             continue;
         }
-
-        NSString *name = NSStringFromClass(subview.class);
-        if ([name containsString:@"Background"] || [name containsString:@"Blur"] ||
-            [name containsString:@"Backdrop"]) {
-            subview.backgroundColor = UIColor.clearColor;
-            subview.layer.backgroundColor = UIColor.clearColor.CGColor;
+        if (DYFSIsBackgroundChrome(subview) ||
+            ([subview isMemberOfClass:UIView.class] && !containsControl && !containsText)) {
+            DYFSClearViewBackgroundOnly(subview);
         }
-        DYFSClearSmallCardChrome(subview, depth + 1);
+        if (!subview.hidden) DYFSClearSmallCardChrome(subview, depth + 1);
+    }
+}
+
+static CGFloat DYFSIntersectionRatio(CGRect rect, CGRect target) {
+    if (CGRectIsEmpty(rect) || CGRectIsEmpty(target)) return 0.0;
+    CGRect intersection = CGRectIntersection(rect, target);
+    if (CGRectIsNull(intersection) || CGRectIsEmpty(intersection)) return 0.0;
+    CGFloat targetArea = CGRectGetWidth(target) * CGRectGetHeight(target);
+    if (targetArea <= 1.0) return 0.0;
+    return CGRectGetWidth(intersection) * CGRectGetHeight(intersection) / targetArea;
+}
+
+static void DYFSClearOverlappingBackgroundSiblings(UIView *anchor, UIView *root, CGFloat maxHeight) {
+    if (!anchor || !root) return;
+    CGRect targetRect = [anchor convertRect:anchor.bounds toView:root];
+    CGFloat targetWidth = CGRectGetWidth(targetRect);
+    CGFloat targetHeight = CGRectGetHeight(targetRect);
+    if (targetWidth < 24.0 || targetHeight < 14.0 || targetHeight > maxHeight) return;
+
+    UIView *cursor = anchor;
+    for (NSUInteger depth = 0; cursor && cursor != root && depth < 8; depth++, cursor = cursor.superview) {
+        UIView *parent = cursor.superview;
+        if (!parent) break;
+        for (UIView *sibling in [parent.subviews copy]) {
+            if (sibling == cursor || sibling.hidden ||
+                DYFSViewContainsControl(sibling, 0) ||
+                DYFSViewContainsRelevantText(sibling, 0)) continue;
+            NSString *name = NSStringFromClass(sibling.class);
+            BOOL couldBeBackground = DYFSIsBackgroundChrome(sibling) ||
+                [sibling isMemberOfClass:UIView.class] ||
+                [sibling isKindOfClass:UIImageView.class];
+            if (!couldBeBackground) continue;
+            CGRect siblingRect = [sibling convertRect:sibling.bounds toView:root];
+            CGFloat siblingHeight = CGRectGetHeight(siblingRect);
+            if (siblingHeight < targetHeight * 0.60 ||
+                siblingHeight > MAX(targetHeight * 2.5, targetHeight + 55.0) ||
+                CGRectGetWidth(siblingRect) > CGRectGetWidth(root.bounds) * 0.99) continue;
+            if (DYFSIntersectionRatio(siblingRect, targetRect) < 0.65) continue;
+            if (DYFSIsBackgroundChrome(sibling) ||
+                [sibling isMemberOfClass:UIView.class] ||
+                [name containsString:@"ImageView"]) sibling.hidden = YES;
+        }
     }
 }
 
@@ -616,63 +694,83 @@ static void DYFSApplyRecommendationTransparencyInView(UIView *root) {
 
     NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
     while (pending.count > 0) {
-        UIView *view = pending.lastObject;
+        UIView *label = pending.lastObject;
         [pending removeLastObject];
-        [pending addObjectsFromArray:view.subviews];
+        [pending addObjectsFromArray:label.subviews];
+        if (!DYFSIsRecommendationBoxLabel(label)) continue;
 
-        if (!DYFSIsRecommendationBoxLabel(view)) continue;
-        for (UIView *candidate = view.superview; candidate && candidate != root; candidate = candidate.superview) {
+        UIView *card = nil;
+        // Nearest plausible pill first; its opaque grey plate is often a sibling.
+        for (UIView *candidate = label.superview; candidate && candidate != root; candidate = candidate.superview) {
             CGRect rect = [candidate convertRect:candidate.bounds toView:root];
             CGFloat width = CGRectGetWidth(rect);
             CGFloat height = CGRectGetHeight(rect);
             CGFloat minY = CGRectGetMinY(rect);
-            if (width >= MAX(84.0, rootWidth * 0.20) &&
-                width <= rootWidth * 0.98 &&
-                height >= 28.0 && height <= 138.0 &&
-                minY >= rootHeight * 0.35 &&
-                CGRectGetMaxY(rect) <= rootHeight + 3.0) {
-                DYFSClearSmallCardChrome(candidate, 0);
-                break;
-            }
+            CGFloat maxY = CGRectGetMaxY(rect);
+            if (width < MAX(58.0, rootWidth * 0.12) ||
+                width > rootWidth * 0.99 ||
+                height < 20.0 || height > 160.0 ||
+                minY < rootHeight * 0.18 || maxY > rootHeight + 4.0) continue;
+            card = candidate;
+            break;
+        }
+        if (card) {
+            DYFSClearSmallCardChrome(card, 0);
+            DYFSClearOverlappingBackgroundSiblings(card, root, 180.0);
         }
     }
 }
 
-// Profile/detail videos get background transparency only; their player frame is
-// left to Douyin so a late profile layout cannot shift the video vertically.
+static BOOL DYFSIsCommentDockView(UIView *view) {
+    if (!view) return NO;
+    NSString *name = NSStringFromClass(view.class);
+    return [name containsString:@"CommentInputContainerView"] ||
+           [name containsString:@"AWECommentInputBackgroundView"] ||
+           [name containsString:@"CommentInputBackgroundView"];
+}
+
+static void DYFSClearCommentDockBackground(UIView *dock, NSUInteger depth) {
+    if (!dock || depth > 8) return;
+    DYFSClearViewBackgroundOnly(dock);
+    CGFloat dockWidth = CGRectGetWidth(dock.bounds);
+    CGFloat dockHeight = CGRectGetHeight(dock.bounds);
+    for (UIView *subview in [dock.subviews copy]) {
+        CGRect rect = [subview convertRect:subview.bounds toView:dock];
+        CGFloat width = CGRectGetWidth(rect);
+        CGFloat height = CGRectGetHeight(rect);
+        BOOL fillsDock = dockWidth > 0.0 && dockHeight > 0.0 &&
+            width >= dockWidth * 0.82 && height >= dockHeight * 0.60;
+        BOOL containsControl = DYFSViewContainsControl(subview, 0);
+        BOOL containsText = DYFSViewContainsRelevantText(subview, 0);
+        BOOL backing = DYFSIsBackgroundChrome(subview) ||
+            [subview isMemberOfClass:UIView.class] ||
+            [subview isKindOfClass:UIImageView.class];
+        if (fillsDock && !containsControl && !containsText && backing) {
+            subview.hidden = YES;
+            continue;
+        }
+        if (DYFSIsBackgroundChrome(subview) ||
+            ([subview isMemberOfClass:UIView.class] && !containsControl && !containsText)) {
+            DYFSClearViewBackgroundOnly(subview);
+        }
+        if (!subview.hidden && ![subview isKindOfClass:UIControl.class]) {
+            DYFSClearCommentDockBackground(subview, depth + 1);
+        }
+    }
+}
+
 static void DYFSApplyVideoDetailBottomTransparencyInView(UIView *root) {
     if (!root || !DYFSIsEnabled()) return;
-    CGFloat rootWidth = CGRectGetWidth(root.bounds);
-    CGFloat rootHeight = CGRectGetHeight(root.bounds);
-    if (rootWidth < 100.0 || rootHeight < 160.0) return;
-
-    UIView *bestCandidate = nil;
-    CGFloat bestScore = -CGFLOAT_MAX;
     NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
     while (pending.count > 0) {
         UIView *view = pending.lastObject;
         [pending removeLastObject];
         [pending addObjectsFromArray:view.subviews];
-        if (view == root || view.hidden || view.alpha <= 0.01) continue;
-
-        CGRect rect = [view convertRect:view.bounds toView:root];
-        CGFloat width = CGRectGetWidth(rect);
-        CGFloat height = CGRectGetHeight(rect);
-        CGFloat bottomGap = rootHeight - CGRectGetMaxY(rect);
-        CGFloat topY = CGRectGetMinY(rect);
-        if (width < rootWidth * 0.76 || height < 34.0 || height > 128.0 ||
-            topY < rootHeight * 0.58 || bottomGap < -3.0 || bottomGap > 175.0) continue;
-
-        CGFloat score = (width / rootWidth) * 4.0 -
-                        (fabs(height - 62.0) / 100.0) -
-                        (fabs(bottomGap - 30.0) / 180.0);
-        if (score > bestScore) {
-            bestCandidate = view;
-            bestScore = score;
+        if (DYFSIsCommentDockView(view)) {
+            DYFSClearCommentDockBackground(view, 0);
+            DYFSClearOverlappingBackgroundSiblings(view, root, 180.0);
         }
     }
-
-    if (bestCandidate) DYFSClearSmallCardChrome(bestCandidate, 0);
 }
 
 static void DYFSDetailTableLayout(id self, SEL cmd) {
@@ -1244,77 +1342,34 @@ static void DYFSPlayerProgressLayout(id self, SEL cmd) {
 
 static UIView *DYFSFindCommentInputBar(UIView *root) {
     if (!root) return nil;
-
-    // Locate the bottom input dock by geometry, not by the placeholder text.
-    // Douyin can change the wording or use a different label while the dock
-    // remains in the same bottom-anchored position.
+    UIView *fallback = nil;
+    CGFloat bestScore = -CGFLOAT_MAX;
     CGFloat rootWidth = CGRectGetWidth(root.bounds);
     CGFloat rootHeight = CGRectGetHeight(root.bounds);
-    if (!isfinite(rootWidth) || !isfinite(rootHeight) ||
-        rootWidth <= 1.0 || rootHeight <= 1.0) return nil;
-
-    UIView *bestCandidate = nil;
-    CGFloat bestScore = -CGFLOAT_MAX;
     NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
-
     while (pending.count > 0) {
-        UIView *current = pending.lastObject;
+        UIView *view = pending.lastObject;
         [pending removeLastObject];
-        [pending addObjectsFromArray:current.subviews];
-
-        if (current == root || current.hidden || current.alpha <= 0.01) continue;
-        CGRect rect = [current convertRect:current.bounds toView:root];
+        [pending addObjectsFromArray:view.subviews];
+        if (view.hidden || view.alpha <= 0.01) continue;
+        if (DYFSIsCommentDockView(view)) return view;
+        CGRect rect = [view convertRect:view.bounds toView:root];
         CGFloat width = CGRectGetWidth(rect);
         CGFloat height = CGRectGetHeight(rect);
         CGFloat bottomGap = rootHeight - CGRectGetMaxY(rect);
-        CGFloat topGap = rootHeight - CGRectGetMinY(rect);
-
-        // The comment input dock is a wide, shallow view anchored near the
-        // bottom edge. Avoid matching the full-screen comment list or labels.
-        if (width < rootWidth * 0.78 ||
-            height < 42.0 || height > 150.0 ||
-            bottomGap < -3.0 || bottomGap > 180.0 ||
-            topGap > 260.0) continue;
-
-        CGFloat widthRatio = width / rootWidth;
-        CGFloat heightPenalty = fabs(height - 68.0) / 100.0;
-        CGFloat bottomPenalty = fabs(bottomGap) / 180.0;
-        CGFloat score = widthRatio * 3.0 - heightPenalty - bottomPenalty;
-        if (score > bestScore) {
-            bestScore = score;
-            bestCandidate = current;
-        }
+        if (width < rootWidth * 0.78 || height < 42.0 || height > 150.0 ||
+            bottomGap < -3.0 || bottomGap > 180.0) continue;
+        CGFloat score = width / MAX(1.0, rootWidth) * 3.0 -
+            fabs(height - 68.0) / 100.0 - fabs(bottomGap) / 180.0;
+        if (score > bestScore) { bestScore = score; fallback = view; }
     }
-
-    return bestCandidate;
+    return fallback;
 }
 
 static void DYFSClearCommentInputBackgrounds(UIView *view, NSUInteger depth) {
     if (!view || depth > 8) return;
-    view.backgroundColor = UIColor.clearColor;
-
-    for (UIView *subview in [view.subviews copy]) {
-        NSString *name = NSStringFromClass(subview.class);
-        CGRect rect = [subview convertRect:subview.bounds toView:view];
-        BOOL coversBar = CGRectGetWidth(view.bounds) > 0.0 &&
-            CGRectGetWidth(rect) >= CGRectGetWidth(view.bounds) * 0.90 &&
-            CGRectGetHeight(view.bounds) > 0.0 &&
-            CGRectGetHeight(rect) >= CGRectGetHeight(view.bounds) * 0.75;
-
-        if (coversBar && ([subview isKindOfClass:UIVisualEffectView.class] ||
-                          [name containsString:@"Background"] ||
-                          [name containsString:@"Blur"])) {
-            subview.hidden = YES;
-            continue;
-        }
-
-        if ([subview isMemberOfClass:UIView.class] ||
-            [name containsString:@"Background"] ||
-            [name containsString:@"Blur"]) {
-            subview.backgroundColor = UIColor.clearColor;
-        }
-        DYFSClearCommentInputBackgrounds(subview, depth + 1);
-    }
+    DYFSClearCommentDockBackground(view, depth);
+    DYFSClearOverlappingBackgroundSiblings(view, view.superview ?: view, 180.0);
 }
 
 static void DYFSCommentPanelLayout(id self, SEL cmd) {
@@ -1330,6 +1385,40 @@ static void DYFSCommentPanelLayout(id self, SEL cmd) {
 
     DYFSClearCommentInputBackgrounds(bar, 0);
     DYFSCommentBarTransparencyApplyCount++;
+}
+
+static void DYFSCommentInputContainerLayout(id self, SEL cmd) {
+    if (DYFSOriginalCommentInputContainerLayout) {
+        ((void (*)(id, SEL))DYFSOriginalCommentInputContainerLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+    UIView *view = (UIView *)self;
+    DYFSClearCommentDockBackground(view, 0);
+    DYFSClearOverlappingBackgroundSiblings(view, view.superview ?: view, 180.0);
+    DYFSCommentBarTransparencyApplyCount++;
+}
+
+static void DYFSCommentInputBackgroundLayout(id self, SEL cmd) {
+    if (DYFSOriginalCommentInputBackgroundLayout) {
+        ((void (*)(id, SEL))DYFSOriginalCommentInputBackgroundLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+    UIView *view = (UIView *)self;
+    DYFSClearCommentDockBackground(view, 0);
+    DYFSClearOverlappingBackgroundSiblings(view, view.superview ?: view, 180.0);
+    DYFSCommentBarTransparencyApplyCount++;
+}
+
+static void DYFSCommentInputControllerLayout(id self, SEL cmd) {
+    if (DYFSOriginalCommentInputControllerLayout) {
+        ((void (*)(id, SEL))DYFSOriginalCommentInputControllerLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+    UIViewController *controller = (UIViewController *)self;
+    DYFSApplyVideoDetailBottomTransparencyInView(controller.view);
+    if (controller.view.superview) {
+        DYFSApplyVideoDetailBottomTransparencyInView(controller.view.superview);
+    }
 }
 
 static void DYFSFeedTableLayout(id self, SEL cmd) {
@@ -1454,6 +1543,24 @@ static void DYFSInstallHooks(void) {
     if (cls && !DYFSInstalledCommentPanel) {
         DYFSInstalledCommentPanel = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
                     (IMP)DYFSCommentPanelLayout, &DYFSOriginalCommentPanelLayout);
+    }
+
+    cls = NSClassFromString(@"AWECommentInputViewSwiftImpl.CommentInputContainerView");
+    if (cls && !DYFSInstalledCommentInputContainer) {
+        DYFSInstalledCommentInputContainer = DYFSInstallHook(cls, @selector(layoutSubviews),
+            (IMP)DYFSCommentInputContainerLayout, &DYFSOriginalCommentInputContainerLayout);
+    }
+
+    cls = NSClassFromString(@"AWECommentInputBackgroundView");
+    if (cls && !DYFSInstalledCommentInputBackground) {
+        DYFSInstalledCommentInputBackground = DYFSInstallHook(cls, @selector(layoutSubviews),
+            (IMP)DYFSCommentInputBackgroundLayout, &DYFSOriginalCommentInputBackgroundLayout);
+    }
+
+    cls = NSClassFromString(@"AWECommentInputViewController");
+    if (cls && !DYFSInstalledCommentInputController) {
+        DYFSInstalledCommentInputController = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+            (IMP)DYFSCommentInputControllerLayout, &DYFSOriginalCommentInputControllerLayout);
     }
 
     cls = NSClassFromString(@"AWENormalModeTabBar");
