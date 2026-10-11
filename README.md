@@ -3,13 +3,13 @@
 用于调整DY UI 的 Theos/Logos Tweak，仅在 **40.7.0** 中测试。  
 **仅供学习交流，禁止用于商业用途。**
 
-> 实验版本 0.3.9。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。设置入口与开关统一显示为“胖胖专属 / 插件开关”。0.3.9 修复全部首页/朋友/消息/我的底栏背景透明范围，加入评论输入栏“爱评论的人运气不会差”的背景透明处理，并在抖音设置数据延迟加载时重试插入开关。直播推流/预览视频与文案不主动扩高或上移；若直播预览仍然偏移，请关闭 DYYY 的“全屏”总开关，仅保留其他单项功能。
+> 实验版本 0.3.10。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。设置入口与开关显示为“胖胖专属 / 插件开关”。0.3.10 调整评论页面底部输入栏透明方式：按底部输入栏的尺寸与位置识别整个背景区域，不依赖“爱评论的人运气不会差”提示文字；文字和按钮保留。全屏/直播与底栏透明修正沿用 0.3.9。
 
 ## 自动构建
 
 仓库使用 Theos/Logos 构建流程，并尝试生成 rootful、rootless、roothide 三种 Debian 包，以及 TrollFools 使用的动态库。推送代码后查看仓库 Actions 页面中的构建任务；成功后在该次运行记录底部 Artifacts 下载构建结果。
 
-预期文件包括三种 .deb、DY.FullScreen_0.3.9.dylib、DY.FullScreen.dylib、DY.FullScreen-TrollFools-0.3.9.zip 和 SHA256SUMS.txt。版本标签（例如 v0.3.9）用于触发 GitHub Release 发布流程。
+预期文件包括三种 .deb、DY.FullScreen_0.3.10.dylib、DY.FullScreen.dylib、DY.FullScreen-TrollFools-0.3.10.zip 和 SHA256SUMS.txt。版本标签（例如 v0.3.10）用于触发 GitHub Release 发布流程。
 
 ## 安装与测试
 
