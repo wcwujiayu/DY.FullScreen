@@ -27,7 +27,6 @@ static BOOL DYFSSchedulePending = NO;
 static NSUInteger DYFSLayoutFixCount = 0;
 static NSUInteger DYFSInteractionContainerAdjustCount = 0;
 static NSUInteger DYFSPlayerContentAdjustCount = 0;
-static NSUInteger DYFSLiveStackAdjustCount = 0;
 static NSUInteger DYFSTabBarApplyCount = 0;
 static BOOL DYFSLastHomeTabSelected = NO;
 static BOOL DYFSLastTabBackgroundHidden = NO;
@@ -40,7 +39,6 @@ static IMP DYFSOriginalPlayerContentA = NULL;
 static IMP DYFSOriginalPlayerContentB = NULL;
 static IMP DYFSOriginalPlayerContentC = NULL;
 static IMP DYFSOriginalLiveStackLayout = NULL;
-static char DYFSLiveStackBaseTransformKey;
 static IMP DYFSOriginalSidebarIconMove = NULL;
 static IMP DYFSOriginalSidebarRightMove = NULL;
 static IMP DYFSOriginalTabBarLayout = NULL;
@@ -115,13 +113,13 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播文案布局 Hook：%@\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n开关名称仅为“首页全屏”。普通视频、图集与直播预告通过播放器、互动控制器和直播文案布局分别处理；不逐项移动点赞/评论/分享按钮。",
+        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播预览原位保护：%@\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n开关名称仅为“首页全屏”。全屏尺寸调整仅用于首页普通视频和图集；直播推流/预览界面保持原生画面、文案与进入直播间控件位置；不逐项移动点赞/评论/分享按钮。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
         DYFSInstalledInteractionController ? @"已安装" : @"未找到类",
         (unsigned long)DYFSInteractionContainerAdjustCount,
         (unsigned long)DYFSPlayerContentAdjustCount,
-        DYFSInstalledLiveStack ? @"已安装" : @"未找到类",
+        DYFSInstalledLiveStack ? @"已安装（不移位）" : @"未找到类",
         (unsigned long)DYFSTabBarHookCount(),
         (unsigned long)DYFSSidebarHookCount(),
         DYFSSettingsEntryVisible ? @"已挂载" : @"未找到侧边栏设置图标",
@@ -140,6 +138,40 @@ static UIViewController *DYFSFindViewController(UIView *view) {
         responder = responder.nextResponder;
     }
     return nil;
+}
+
+// Full-screen sizing belongs to ordinary homepage video cells and photo posts.
+// Live push/preview has its own layout coordinator (including DYYY's) and must
+// retain Douyin's native video centering, prompt and "enter live room" positions.
+static BOOL DYFSIsLivePreStreamContext(UIView *view) {
+    if (!view) return NO;
+
+    for (UIView *cursor = view; cursor; cursor = cursor.superview) {
+        NSString *name = NSStringFromClass(cursor.class);
+        if ([name containsString:@"AWELiveNewPreStreamViewController"] ||
+            [name containsString:@"AWELivePreStream"]) {
+            return YES;
+        }
+    }
+
+    UIViewController *controller = DYFSFindViewController(view);
+    for (NSUInteger depth = 0; controller && depth < 20; depth++, controller = controller.parentViewController) {
+        NSString *name = NSStringFromClass(controller.class);
+        if ([name containsString:@"AWELiveNewPreStreamViewController"] ||
+            [name containsString:@"AWELivePreStream"]) {
+            return YES;
+        }
+    }
+
+    UIResponder *responder = view;
+    for (NSUInteger depth = 0; responder && depth < 40; depth++, responder = responder.nextResponder) {
+        NSString *name = NSStringFromClass(responder.class);
+        if ([name containsString:@"AWELiveNewPreStreamViewController"] ||
+            [name containsString:@"AWELivePreStream"]) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 static UIViewController *DYFSActiveTopViewController(void) {
@@ -457,7 +489,7 @@ static void DYFSInteractionControllerLayout(id self, SEL cmd) {
 
     UIViewController *controller = (UIViewController *)self;
     UIView *view = controller.view;
-    if (!view || !view.superview || DYFSInProfileContext(view)) return;
+    if (!view || !view.superview || DYFSInProfileContext(view) || DYFSIsLivePreStreamContext(view)) return;
     if (!DYFSIsFeedCellInteractionController(controller)) return;
 
     UIView *parent = view.superview;
@@ -485,7 +517,12 @@ static void DYFSInteractionControllerLayout(id self, SEL cmd) {
 static void DYFSApplyPlayerContentHeight(id playerController) {
     if (!DYFSIsEnabled()) return;
 
+    UIView *controllerView = [playerController isKindOfClass:UIViewController.class]
+        ? ((UIViewController *)playerController).view : nil;
+    if (DYFSIsLivePreStreamContext(controllerView)) return;
+
     UIView *contentView = DYFSSafeValueForKey(playerController, @"contentView");
+    if (DYFSIsLivePreStreamContext(contentView)) return;
     if (![contentView isKindOfClass:UIView.class] || !contentView.superview) return;
 
     UIView *parent = contentView.superview;
@@ -532,37 +569,11 @@ static void DYFSPlayerContentLayoutC(id self, SEL cmd) {
 }
 
 static void DYFSLiveElementStackLayout(id self, SEL cmd) {
+    // Keep this pass-through hook only so layoutSubviews chaining remains intact.
+    // Do not offset this stack: DYYY has its own live-preview layout coordinator,
+    // and a second tab-bar-height translation moves the copy and entry affordance.
     if (DYFSOriginalLiveStackLayout) {
         ((void (*)(id, SEL))DYFSOriginalLiveStackLayout)(self, cmd);
-    }
-
-    UIView *stack = (UIView *)self;
-    NSValue *baseValue = objc_getAssociatedObject(stack, &DYFSLiveStackBaseTransformKey);
-    UIViewController *controller = DYFSFindViewController(stack);
-    NSString *controllerName = controller ? NSStringFromClass(controller.class) : @"";
-    BOOL isLivePrestream = [controllerName containsString:@"AWELiveNewPreStreamViewController"];
-    BOOL hasLiveCopy =
-        DYFSFindSubviewOfClass(stack, @"AWELiveFeedLabelTagView", 0) != nil ||
-        DYFSFindSubviewOfClass(stack, @"AWELivePrestreamGuideView", 0) != nil ||
-        DYFSFindSubviewOfClass(stack, @"AFDCancelMuteAwemeView", 0) != nil;
-
-    if (DYFSIsEnabled() && isLivePrestream && hasLiveCopy) {
-        if (!baseValue) {
-            baseValue = [NSValue valueWithCGAffineTransform:stack.transform];
-            objc_setAssociatedObject(stack, &DYFSLiveStackBaseTransformKey, baseValue, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-        CGAffineTransform target = [baseValue CGAffineTransformValue];
-        target.ty -= DYFSBottomTabBarHeight(stack);
-        if (!CGAffineTransformEqualToTransform(stack.transform, target)) {
-            stack.transform = target;
-        }
-        DYFSLiveStackAdjustCount++;
-    } else if (baseValue) {
-        CGAffineTransform original = [baseValue CGAffineTransformValue];
-        if (!CGAffineTransformEqualToTransform(stack.transform, original)) {
-            stack.transform = original;
-        }
-        objc_setAssociatedObject(stack, &DYFSLiveStackBaseTransformKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 }
 
@@ -826,7 +837,7 @@ static void DYFSFeedTableLayout(id self, SEL cmd) {
 
     UIView *view = (UIView *)self;
     UIView *parent = view.superview;
-    if (!parent || DYFSInProfileContext(view)) return;
+    if (!parent || DYFSInProfileContext(view) || DYFSIsLivePreStreamContext(view)) return;
     CGRect frame = view.frame;
     CGFloat targetHeight = CGRectGetHeight(parent.bounds);
     if (!isfinite(targetHeight) || targetHeight <= 1.0 ||

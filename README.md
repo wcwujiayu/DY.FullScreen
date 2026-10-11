@@ -3,13 +3,13 @@
 用于调整DY UI 的 Theos/Logos Tweak，仅在 **40.7.0** 中测试。  
 **仅供学习交流，禁止用于商业用途。**
 
-> 实验版本 0.3.7。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。原生设置项标题为“首页全屏”，副标题为“胖胖专用工具”。0.3.7 针对进度条内部横贯黑线增加两个进度容器的背景清理逻辑；普通视频、图集与直播布局仍需在目标设备验证。
+> 实验版本 0.3.8。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。原生设置项标题为“首页全屏”，副标题为“胖胖专用工具”。0.3.8 停止对直播推流/预览画面的扩高及预览文案上移，避免与 DYYY 的直播预览布局协调器双重偏移；首页全屏仍针对普通视频和图集。若同时使用 DYYY，建议关闭 DYYY 的“全屏”总开关，保留其他单项功能，避免其自身再次调整直播预览布局。
 
 ## 自动构建
 
 仓库使用 Theos/Logos 构建流程，并尝试生成 rootful、rootless、roothide 三种 Debian 包，以及 TrollFools 使用的动态库。推送代码后查看仓库 Actions 页面中的构建任务；成功后在该次运行记录底部 Artifacts 下载构建结果。
 
-预期文件包括三种 .deb、DY.FullScreen_0.3.7.dylib、DY.FullScreen.dylib、DY.FullScreen-TrollFools-0.3.7.zip 和 SHA256SUMS.txt。版本标签（例如 v0.3.7）用于触发 GitHub Release 发布流程。
+预期文件包括三种 .deb、DY.FullScreen_0.3.8.dylib、DY.FullScreen.dylib、DY.FullScreen-TrollFools-0.3.8.zip 和 SHA256SUMS.txt。版本标签（例如 v0.3.8）用于触发 GitHub Release 发布流程。
 
 ## 安装与测试
 
