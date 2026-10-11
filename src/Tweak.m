@@ -9,6 +9,11 @@ static NSString * const DYFSTestedVersion = @"40.7.0";
 static NSString * const DYFSEnabledKey = @"com.dy.fullscreen.enabled";
 static BOOL DYFSInstalledFeed = NO;
 static BOOL DYFSInstalledStory = NO;
+static BOOL DYFSInstalledInteractionController = NO;
+static BOOL DYFSInstalledPlayerContentA = NO;
+static BOOL DYFSInstalledPlayerContentB = NO;
+static BOOL DYFSInstalledPlayerContentC = NO;
+static BOOL DYFSInstalledLiveStack = NO;
 static BOOL DYFSInstalledSidebarIcon = NO;
 static BOOL DYFSInstalledSidebarRight = NO;
 static BOOL DYFSInstalledTabBarLayout = NO;
@@ -20,6 +25,8 @@ static NSUInteger DYFSInstallAttempts = 0;
 static BOOL DYFSSchedulePending = NO;
 static NSUInteger DYFSLayoutFixCount = 0;
 static NSUInteger DYFSInteractionContainerAdjustCount = 0;
+static NSUInteger DYFSPlayerContentAdjustCount = 0;
+static NSUInteger DYFSLiveStackAdjustCount = 0;
 static NSUInteger DYFSTabBarApplyCount = 0;
 static BOOL DYFSLastHomeTabSelected = NO;
 static BOOL DYFSLastTabBackgroundHidden = NO;
@@ -27,6 +34,12 @@ static BOOL DYFSSettingsEntryVisible = NO;
 static NSString *DYFSLastInstallSummary = @"尚未检测";
 static IMP DYFSOriginalFeedLayout = NULL;
 static IMP DYFSOriginalStoryLayout = NULL;
+static IMP DYFSOriginalInteractionControllerLayout = NULL;
+static IMP DYFSOriginalPlayerContentA = NULL;
+static IMP DYFSOriginalPlayerContentB = NULL;
+static IMP DYFSOriginalPlayerContentC = NULL;
+static IMP DYFSOriginalLiveStackLayout = NULL;
+static char DYFSLiveStackBaseTransformKey;
 static IMP DYFSOriginalSidebarIconMove = NULL;
 static IMP DYFSOriginalSidebarRightMove = NULL;
 static IMP DYFSOriginalTabBarLayout = NULL;
@@ -100,11 +113,13 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动层边界 Hook：%@\n互动层边界调整次数：%lu\n底栏透明 Hook：%lu/2\n进度容器透明 Hook：%@\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n“首页全屏”会扩展视频列表，并将点赞/评论/分享及文案所在的整体互动层限定在底栏上方的可用区域；不逐项移动按钮或文案。请以实机显示为准。",
+        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播文案布局 Hook：%@\n底栏透明 Hook：%lu/2\n进度容器透明 Hook：%@\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n开关名称仅为“首页全屏”。普通视频、图集与直播预告通过播放器、互动控制器和直播文案布局分别处理；不逐项移动点赞/评论/分享按钮。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
-        DYFSInstalledStory ? @"已安装" : @"未找到类",
+        DYFSInstalledInteractionController ? @"已安装" : @"未找到类",
         (unsigned long)DYFSInteractionContainerAdjustCount,
+        (unsigned long)DYFSPlayerContentAdjustCount,
+        DYFSInstalledLiveStack ? @"已安装" : @"未找到类",
         (unsigned long)DYFSTabBarHookCount(),
         DYFSInstalledProgressContainer ? @"已安装" : @"未找到类",
         (unsigned long)DYFSSidebarHookCount(),
@@ -190,13 +205,13 @@ static void DYFSOpenSettings(id sender);
     titleLabel.textColor = UIColor.labelColor;
 
     UILabel *descriptionLabel = [[UILabel alloc] init];
-    descriptionLabel.text = @"可在抖音原生“设置”列表中开关首页全屏。视频列表扩展后，点赞、评论、分享和文案所在的整体互动层限制在底栏上方可用区域；不逐项修改按钮或文案位置。适配目标为抖音 40.7.0。";
+    descriptionLabel.text = @"适配目标为抖音 40.7.0。";
     descriptionLabel.font = [UIFont systemFontOfSize:14];
     descriptionLabel.textColor = UIColor.secondaryLabelColor;
     descriptionLabel.numberOfLines = 0;
 
     UILabel *switchTitle = [[UILabel alloc] init];
-    switchTitle.text = @"启用首页全屏";
+    switchTitle.text = @"首页全屏";
     switchTitle.font = [UIFont systemFontOfSize:16];
     switchTitle.textColor = UIColor.labelColor;
 
@@ -414,6 +429,142 @@ static CGFloat DYFSBottomTabBarHeight(UIView *view) {
     return 49.0;
 }
 
+static BOOL DYFSIsFeedCellInteractionController(UIViewController *controller) {
+    if (!controller) return NO;
+
+    id base = DYFSSafeValueForKey(controller, @"awemeBaseViewController");
+    NSString *baseName = base ? NSStringFromClass([base class]) : @"";
+    if ([baseName containsString:@"AWEFeedCellViewController"]) return YES;
+    if (base) return NO;
+
+    UIViewController *cursor = controller.parentViewController;
+    for (NSUInteger depth = 0; cursor && depth < 12; depth++, cursor = cursor.parentViewController) {
+        NSString *name = NSStringFromClass(cursor.class);
+        if ([name containsString:@"AWEFeedCellViewController"]) return YES;
+    }
+    return NO;
+}
+
+// Ordinary video posts and photo carousels use different player wrappers and
+// different child counts. Constrain the feed interaction controller directly,
+// so the right-side actions and caption stay within their original usable area.
+static void DYFSInteractionControllerLayout(id self, SEL cmd) {
+    if (DYFSOriginalInteractionControllerLayout) {
+        ((void (*)(id, SEL))DYFSOriginalInteractionControllerLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+
+    UIViewController *controller = (UIViewController *)self;
+    UIView *view = controller.view;
+    if (!view || !view.superview || DYFSInProfileContext(view)) return;
+    if (!DYFSIsFeedCellInteractionController(controller)) return;
+
+    UIView *parent = view.superview;
+    CGFloat parentHeight = CGRectGetHeight(parent.bounds);
+    CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
+    CGFloat targetHeight = parentHeight - tabBarHeight;
+    CGRect frame = view.frame;
+    CGFloat screenWidth = CGRectGetWidth(UIScreen.mainScreen.bounds);
+
+    if (!isfinite(targetHeight) || targetHeight <= 1.0 ||
+        (fabs(CGRectGetWidth(frame) - screenWidth) > 1.0 && CGRectGetHeight(frame) < parentHeight)) {
+        return;
+    }
+    if (fabs(CGRectGetHeight(frame) - targetHeight) <= 0.5) return;
+
+    CGFloat oldHeight = CGRectGetHeight(frame);
+    frame.size.height = targetHeight;
+    view.frame = frame;
+    DYFSInteractionContainerAdjustCount++;
+    DYFSLog([NSString stringWithFormat:
+        @"interaction controller height %.2f -> %.2f (parent %.2f, tab bar %.2f)",
+        oldHeight, targetHeight, parentHeight, tabBarHeight]);
+}
+
+static void DYFSApplyPlayerContentHeight(id playerController) {
+    if (!DYFSIsEnabled()) return;
+
+    UIView *contentView = DYFSSafeValueForKey(playerController, @"contentView");
+    if (![contentView isKindOfClass:UIView.class] || !contentView.superview) return;
+
+    UIView *parent = contentView.superview;
+    CGFloat parentHeight = CGRectGetHeight(parent.bounds);
+    CGFloat currentHeight = CGRectGetHeight(contentView.frame);
+    CGFloat diff = parentHeight - currentHeight;
+    CGFloat tabBarHeight = DYFSBottomTabBarHeight(contentView);
+    CGFloat tolerance = MAX(1.0, tabBarHeight * 0.03);
+    CGFloat targetHeight = currentHeight;
+
+    // Match the two common wrapper cases seen in DYYY: one tab-bar height short,
+    // or two tab-bar heights short. This targets contentView only, never controls.
+    if (fabs(diff - tabBarHeight) <= tolerance) {
+        targetHeight = parentHeight;
+    } else if (fabs(diff - (tabBarHeight * 2.0)) <= tolerance) {
+        targetHeight = parentHeight - tabBarHeight;
+    } else {
+        return;
+    }
+
+    if (!isfinite(targetHeight) || targetHeight <= 1.0 ||
+        fabs(currentHeight - targetHeight) <= 0.5) return;
+
+    CGRect frame = contentView.frame;
+    frame.size.height = targetHeight;
+    contentView.frame = frame;
+    DYFSPlayerContentAdjustCount++;
+    DYFSLog([NSString stringWithFormat:
+        @"%@ contentView height %.2f -> %.2f (parent %.2f, diff %.2f, tab bar %.2f)",
+        NSStringFromClass([playerController class]), currentHeight, targetHeight, parentHeight, diff, tabBarHeight]);
+}
+
+static void DYFSPlayerContentLayoutA(id self, SEL cmd) {
+    if (DYFSOriginalPlayerContentA) ((void (*)(id, SEL))DYFSOriginalPlayerContentA)(self, cmd);
+    DYFSApplyPlayerContentHeight(self);
+}
+static void DYFSPlayerContentLayoutB(id self, SEL cmd) {
+    if (DYFSOriginalPlayerContentB) ((void (*)(id, SEL))DYFSOriginalPlayerContentB)(self, cmd);
+    DYFSApplyPlayerContentHeight(self);
+}
+static void DYFSPlayerContentLayoutC(id self, SEL cmd) {
+    if (DYFSOriginalPlayerContentC) ((void (*)(id, SEL))DYFSOriginalPlayerContentC)(self, cmd);
+    DYFSApplyPlayerContentHeight(self);
+}
+
+static void DYFSLiveElementStackLayout(id self, SEL cmd) {
+    if (DYFSOriginalLiveStackLayout) {
+        ((void (*)(id, SEL))DYFSOriginalLiveStackLayout)(self, cmd);
+    }
+
+    UIView *stack = (UIView *)self;
+    NSValue *baseValue = objc_getAssociatedObject(stack, &DYFSLiveStackBaseTransformKey);
+    UIViewController *controller = DYFSFindViewController(stack);
+    NSString *controllerName = controller ? NSStringFromClass(controller.class) : @"";
+    BOOL isLivePrestream = [controllerName containsString:@"AWELiveNewPreStreamViewController"];
+    BOOL hasLiveCopy =
+        DYFSFindSubviewOfClass(stack, @"AWELiveFeedLabelTagView", 0) != nil ||
+        DYFSFindSubviewOfClass(stack, @"AWELivePrestreamGuideView", 0) != nil ||
+        DYFSFindSubviewOfClass(stack, @"AFDCancelMuteAwemeView", 0) != nil;
+
+    if (DYFSIsEnabled() && isLivePrestream && hasLiveCopy) {
+        if (!baseValue) {
+            baseValue = [NSValue valueWithCGAffineTransform:stack.transform];
+            objc_setAssociatedObject(stack, &DYFSLiveStackBaseTransformKey, baseValue, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        CGAffineTransform target = [baseValue CGAffineTransformValue];
+        target.ty -= DYFSBottomTabBarHeight(stack);
+        if (!CGAffineTransformEqualToTransform(stack.transform, target)) {
+            stack.transform = target;
+        }
+        DYFSLiveStackAdjustCount++;
+    } else if (baseValue) {
+        CGAffineTransform original = [baseValue CGAffineTransformValue];
+        if (!CGAffineTransformEqualToTransform(stack.transform, original)) {
+            stack.transform = original;
+        }
+        objc_setAssociatedObject(stack, &DYFSLiveStackBaseTransformKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+}
+
 // Expand the feed canvas while keeping the interaction controller (right-side
 // actions, caption and other copy) within the usable area above the bottom
 // tab bar. Only the parent interaction container is sized; individual controls
@@ -425,7 +576,7 @@ static void DYFSStoryContainerLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
 
     UIView *container = (UIView *)self;
-    if (container.subviews.count == 2 || DYFSInProfileContext(container)) return;
+    if (DYFSInProfileContext(container)) return;
 
     id homeValue = DYFSSafeValueForKey(container, @"enableEnterProfile");
     BOOL isHome = [homeValue respondsToSelector:@selector(boolValue)] && [homeValue boolValue];
@@ -504,8 +655,8 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
 
     id item = [[itemClass alloc] init];
     DYFSSafeSetValueForKey(item, itemIdentifier, @"identifier");
-    DYFSSafeSetValueForKey(item, @"首页全屏（DY.FullScreen）", @"title");
-    DYFSSafeSetValueForKey(item, @"功能区和文案保留底栏上方的原始可用高度。", @"subTitle");
+    DYFSSafeSetValueForKey(item, @"首页全屏", @"title");
+    DYFSSafeSetValueForKey(item, @"", @"subTitle");
     DYFSSafeSetValueForKey(item, @"", @"detail");
     DYFSSafeSetValueForKey(item, @6, @"cellType");
     DYFSSafeSetValueForKey(item, @0, @"colorStyle");
@@ -527,10 +678,10 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
     DYFSSafeSetValueForKey(item, [switchChangedBlock copy], @"switchChangedBlock");
 
     id section = [[sectionClass alloc] init];
-    DYFSSafeSetValueForKey(section, @"DY.FullScreen", @"sectionHeaderTitle");
-    DYFSSafeSetValueForKey(section, @"只调整整体互动层边界，不逐项移动按钮或文案。", @"sectionFooterTitle");
-    DYFSSafeSetValueForKey(section, @40, @"sectionHeaderHeight");
-    DYFSSafeSetValueForKey(section, @YES, @"useNewFooterLayout");
+    DYFSSafeSetValueForKey(section, @"", @"sectionHeaderTitle");
+    DYFSSafeSetValueForKey(section, @"", @"sectionFooterTitle");
+    DYFSSafeSetValueForKey(section, @0, @"sectionHeaderHeight");
+    DYFSSafeSetValueForKey(section, @NO, @"useNewFooterLayout");
     DYFSSafeSetValueForKey(section, @0, @"type");
     DYFSSafeSetValueForKey(section, @[item], @"itemArray");
 
@@ -693,6 +844,36 @@ static void DYFSInstallHooks(void) {
                     (IMP)DYFSStoryContainerLayout, &DYFSOriginalStoryLayout);
     }
 
+    cls = NSClassFromString(@"AWEPlayInteractionViewController");
+    if (!DYFSInstalledInteractionController && cls) {
+        DYFSInstalledInteractionController = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+                    (IMP)DYFSInteractionControllerLayout, &DYFSOriginalInteractionControllerLayout);
+    }
+
+    cls = NSClassFromString(@"AWEAwemePlayVideoViewController");
+    if (!DYFSInstalledPlayerContentA && cls) {
+        DYFSInstalledPlayerContentA = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+                    (IMP)DYFSPlayerContentLayoutA, &DYFSOriginalPlayerContentA);
+    }
+
+    cls = NSClassFromString(@"AWEDPlayerFeedPlayerViewController");
+    if (!DYFSInstalledPlayerContentB && cls) {
+        DYFSInstalledPlayerContentB = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+                    (IMP)DYFSPlayerContentLayoutB, &DYFSOriginalPlayerContentB);
+    }
+
+    cls = NSClassFromString(@"AWEDPlayerViewController_Merge");
+    if (!DYFSInstalledPlayerContentC && cls) {
+        DYFSInstalledPlayerContentC = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+                    (IMP)DYFSPlayerContentLayoutC, &DYFSOriginalPlayerContentC);
+    }
+
+    cls = NSClassFromString(@"AWEElementStackView");
+    if (!DYFSInstalledLiveStack && cls) {
+        DYFSInstalledLiveStack = DYFSInstallHook(cls, @selector(layoutSubviews),
+                    (IMP)DYFSLiveElementStackLayout, &DYFSOriginalLiveStackLayout);
+    }
+
     cls = NSClassFromString(@"AWELeftSideBarTopIconHorizontalView");
     if (!DYFSInstalledSidebarIcon && cls) {
         DYFSInstalledSidebarIcon = DYFSInstallHook(cls, @selector(didMoveToSuperview),
@@ -734,8 +915,11 @@ static void DYFSInstallHooks(void) {
                     (IMP)DYFSNativeSettingsDidAppear, &DYFSOriginalNativeSettingsDidAppear);
     }
 
-    NSString *summary = [NSString stringWithFormat:@"video-list hook %@; interaction-container hook %@; sidebar hooks %lu/2; tab bar hooks %lu/2; native settings switch hook %@; per-control frame changes off",
+    NSString *summary = [NSString stringWithFormat:@"video-list %@; story-container %@; interaction-controller %@; player-content %d/3; live-copy %@; sidebar hooks %lu/2; tab bar hooks %lu/2; settings-switch %@",
                          DYFSInstalledFeed ? @"on" : @"off", DYFSInstalledStory ? @"on" : @"off",
+                         DYFSInstalledInteractionController ? @"on" : @"off",
+                         (int)DYFSInstalledPlayerContentA + (int)DYFSInstalledPlayerContentB + (int)DYFSInstalledPlayerContentC,
+                         DYFSInstalledLiveStack ? @"on" : @"off",
                          (unsigned long)DYFSSidebarHookCount(), (unsigned long)DYFSTabBarHookCount(),
                          DYFSInstalledNativeSettingsSwitch ? @"on" : @"off"];
     if (![summary isEqualToString:DYFSLastInstallSummary]) {
@@ -753,11 +937,12 @@ static void DYFSScheduleHooks(void) {
         DYFSInstallAttempts++;
         DYFSInstallHooks();
 
-        BOOL layoutInstalled = DYFSInstalledFeed && DYFSInstalledStory;
+        BOOL layoutInstalled = DYFSInstalledFeed && DYFSInstalledStory && DYFSInstalledInteractionController;
         BOOL sidebarInstalled = DYFSInstalledSidebarIcon || DYFSInstalledSidebarRight;
         BOOL tabBarInstalled = DYFSInstalledTabBarLayout && DYFSInstalledTabBarHidden;
-        if ((!layoutInstalled || !sidebarInstalled || !tabBarInstalled || !DYFSInstalledNativeSettingsSwitch) &&
-            DYFSInstallAttempts < 60) {
+        BOOL playerLayoutInstalled = DYFSInstalledPlayerContentB || DYFSInstalledPlayerContentC;
+        if ((!layoutInstalled || !sidebarInstalled || !tabBarInstalled || !DYFSInstalledNativeSettingsSwitch ||
+             !playerLayoutInstalled || !DYFSInstalledLiveStack) && DYFSInstallAttempts < 60) {
             DYFSScheduleHooks();
         }
     });
