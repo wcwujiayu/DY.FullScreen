@@ -18,6 +18,8 @@ static BOOL DYFSInstalledSidebarIcon = NO;
 static BOOL DYFSInstalledSidebarRight = NO;
 static BOOL DYFSInstalledTabBarLayout = NO;
 static BOOL DYFSInstalledTabBarHidden = NO;
+static BOOL DYFSInstalledInteractionProgress = NO;
+static BOOL DYFSInstalledPlayerProgress = NO;
 static BOOL DYFSInstalledNativeSettingsSwitch = NO;
 static BOOL DYFSNativeSettingsRowAdded = NO;
 static NSUInteger DYFSInstallAttempts = 0;
@@ -43,6 +45,8 @@ static IMP DYFSOriginalSidebarIconMove = NULL;
 static IMP DYFSOriginalSidebarRightMove = NULL;
 static IMP DYFSOriginalTabBarLayout = NULL;
 static IMP DYFSOriginalTabBarHidden = NULL;
+static IMP DYFSOriginalInteractionProgressLayout = NULL;
+static IMP DYFSOriginalPlayerProgressLayout = NULL;
 static IMP DYFSOriginalNativeSettingsDidAppear = NULL;
 
 static void DYFSLog(NSString *message) {
@@ -779,6 +783,43 @@ static void DYFSTabBarSetHidden(id self, SEL cmd, BOOL hidden) {
     DYFSApplyTabBarTransparency((UIView *)self);
 }
 
+// Douyin's full-screen mode can expose dark one-pixel/background views inside
+// either progress-bar wrapper as a full-width black line. Keep the correction
+// scoped to progress-container children only; never resize or recolor controls.
+static void DYFSInteractionProgressLayout(id self, SEL cmd) {
+    if (DYFSOriginalInteractionProgressLayout) {
+        ((void (*)(id, SEL))DYFSOriginalInteractionProgressLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+
+    UIView *container = (UIView *)self;
+    for (UIView *subview in [container.subviews copy]) {
+        if ([subview class] == UIView.class) {
+            subview.backgroundColor = UIColor.clearColor;
+        }
+    }
+}
+
+static void DYFSPlayerProgressLayout(id self, SEL cmd) {
+    if (DYFSOriginalPlayerProgressLayout) {
+        ((void (*)(id, SEL))DYFSOriginalPlayerProgressLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+
+    UIView *container = (UIView *)self;
+    for (UIView *subview in [container.subviews copy]) {
+        if (![subview isMemberOfClass:UIView.class]) continue;
+
+        UIColor *background = subview.backgroundColor;
+        if (!background) continue;
+        CGFloat hue = 0.0, saturation = 0.0, brightness = 1.0, alpha = 1.0;
+        if ([background getHue:&hue saturation:&saturation brightness:&brightness alpha:&alpha] &&
+            brightness < 0.2) {
+            subview.backgroundColor = UIColor.clearColor;
+        }
+    }
+}
+
 static void DYFSFeedTableLayout(id self, SEL cmd) {
     if (DYFSOriginalFeedLayout) ((void (*)(id, SEL))DYFSOriginalFeedLayout)(self, cmd);
     if (!DYFSIsEnabled()) return;
@@ -879,6 +920,18 @@ static void DYFSInstallHooks(void) {
     for (UIWindow *window in UIApplication.sharedApplication.windows) {
         DYFSScanForSettingsEntry(window, 0);
         if (DYFSSettingsEntryVisible) break;
+    }
+
+    cls = NSClassFromString(@"AWEPlayInteractionProgressContainerView");
+    if (cls && !DYFSInstalledInteractionProgress) {
+        DYFSInstalledInteractionProgress = DYFSInstallHook(cls, @selector(layoutSubviews),
+                    (IMP)DYFSInteractionProgressLayout, &DYFSOriginalInteractionProgressLayout);
+    }
+
+    cls = NSClassFromString(@"AWEDPlayerProgressContainerView");
+    if (cls && !DYFSInstalledPlayerProgress) {
+        DYFSInstalledPlayerProgress = DYFSInstallHook(cls, @selector(layoutSubviews),
+                    (IMP)DYFSPlayerProgressLayout, &DYFSOriginalPlayerProgressLayout);
     }
 
     cls = NSClassFromString(@"AWENormalModeTabBar");
