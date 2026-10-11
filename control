@@ -1,6 +1,6 @@
 Package: com.dy.fullscreen
 Name: DY.FullScreen
-Version: 0.3.0
+Version: 0.3.1
 Architecture: iphoneos-arm
 Description: Theos/Logos Tweak for adjusting DY UI; tested only on 40.7.0. Learning and non-commercial use only.
 Maintainer: DY.FullScreen contributors
