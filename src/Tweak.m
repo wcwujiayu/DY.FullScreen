@@ -1020,6 +1020,14 @@ static void DYFSLiveElementStackLayout(id self, SEL cmd) {
     if (DYFSOriginalLiveStackLayout) {
         ((void (*)(id, SEL))DYFSOriginalLiveStackLayout)(self, cmd);
     }
+    // This stack is also a direct host for feed's related-search and collection pills.
+    // Scan after the native layout pass so their background plates are actually present.
+    if (DYFSIsEnabled()) {
+        DYFSApplyRecommendationTransparencyInView((UIView *)self);
+        if (((UIView *)self).superview) {
+            DYFSApplyRecommendationTransparencyInView(((UIView *)self).superview);
+        }
+    }
 }
 
 // Expand the feed canvas while keeping the interaction controller (right-side
