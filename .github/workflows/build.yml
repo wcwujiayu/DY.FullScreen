@@ -41,7 +41,7 @@ jobs:
           shopt -s nullglob
           files=(packages/*.deb)
           if [ "${#files[@]}" -ne 1 ]; then echo "Expected one rootful package, got ${#files[@]}" >&2; exit 1; fi
-          mv "${files[0]}" dist/com.dy.fullscreen_0.3.10_iphoneos-arm-rootful.deb
+          mv "${files[0]}" dist/com.dy.fullscreen_0.3.11_iphoneos-arm-rootful.deb
 
       - name: Build rootless package
         shell: bash
@@ -52,7 +52,7 @@ jobs:
           shopt -s nullglob
           files=(packages/*.deb)
           if [ "${#files[@]}" -ne 1 ]; then echo "Expected one rootless package, got ${#files[@]}" >&2; exit 1; fi
-          mv "${files[0]}" dist/com.dy.fullscreen_0.3.10_iphoneos-arm64-rootless.deb
+          mv "${files[0]}" dist/com.dy.fullscreen_0.3.11_iphoneos-arm64-rootless.deb
 
       - name: Build roothide package
         shell: bash
@@ -63,7 +63,7 @@ jobs:
           shopt -s nullglob
           files=(packages/*.deb)
           if [ "${#files[@]}" -ne 1 ]; then echo "Expected one roothide package, got ${#files[@]}" >&2; exit 1; fi
-          mv "${files[0]}" dist/com.dy.fullscreen_0.3.10_iphoneos-arm64e-roothide.deb
+          mv "${files[0]}" dist/com.dy.fullscreen_0.3.11_iphoneos-arm64e-roothide.deb
 
       - name: Export dylib and checksums
         shell: bash
@@ -71,16 +71,16 @@ jobs:
           set -euo pipefail
           stage="$RUNNER_TEMP/dy-fullscreen-rootless"
           rm -rf "$stage" && mkdir -p "$stage"
-          dpkg-deb -x dist/com.dy.fullscreen_0.3.10_iphoneos-arm64-rootless.deb "$stage"
+          dpkg-deb -x dist/com.dy.fullscreen_0.3.11_iphoneos-arm64-rootless.deb "$stage"
           dylib="$(find "$stage" -type f -name 'DY.FullScreen.dylib' -print -quit)"
           if [[ -z "$dylib" ]]; then
             echo "DY.FullScreen.dylib not found inside rootless package" >&2
             find "$stage" -type f -print >&2 || true
             exit 1
           fi
-          cp "$dylib" dist/DY.FullScreen_0.3.10.dylib
+          cp "$dylib" dist/DY.FullScreen_0.3.11.dylib
           cp "$dylib" dist/DY.FullScreen.dylib
-          (cd dist && zip -q -j DY.FullScreen-TrollFools-0.3.10.zip DY.FullScreen.dylib)
+          (cd dist && zip -q -j DY.FullScreen-TrollFools-0.3.11.zip DY.FullScreen.dylib)
           (cd dist && shasum -a 256 *.deb *.dylib *.zip > SHA256SUMS.txt)
           ls -lah dist
 
