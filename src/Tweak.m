@@ -870,28 +870,6 @@ static void DYFSPlayerProgressLayout(id self, SEL cmd) {
     }
 }
 
-static BOOL DYFSViewContainsCommentPlaceholder(UIView *view, NSUInteger depth) {
-    if (!view || depth > 12) return NO;
-
-    NSString *text = view.accessibilityLabel ?: @"";
-    if ([view isKindOfClass:UILabel.class]) {
-        text = ((UILabel *)view).text ?: text;
-    } else if ([view isKindOfClass:UITextField.class]) {
-        UITextField *field = (UITextField *)view;
-        text = field.placeholder ?: field.text ?: text;
-    } else if ([view isKindOfClass:UITextView.class]) {
-        text = ((UITextView *)view).text ?: text;
-    } else if ([view isKindOfClass:UIButton.class]) {
-        text = [((UIButton *)view) titleForState:UIControlStateNormal] ?: text;
-    }
-
-    if ([text containsString:@"爱评论的人运气不会差"]) return YES;
-    for (UIView *subview in [view.subviews copy]) {
-        if (DYFSViewContainsCommentPlaceholder(subview, depth + 1)) return YES;
-    }
-    return NO;
-}
-
 static UIView *DYFSFindCommentInputBar(UIView *root) {
     if (!root) return nil;
 
