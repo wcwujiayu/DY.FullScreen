@@ -8,6 +8,7 @@ static NSString * const DYFSBundleID = @"com.ss.iphone.ugc.Aweme";
 static NSString * const DYFSTestedVersion = @"40.7.0";
 static NSString * const DYFSEnabledKey = @"com.dy.fullscreen.enabled";
 static BOOL DYFSInstalledFeed = NO;
+static BOOL DYFSInstalledStory = NO;
 static BOOL DYFSInstalledSidebarIcon = NO;
 static BOOL DYFSInstalledSidebarRight = NO;
 static BOOL DYFSInstalledTabBarLayout = NO;
@@ -18,12 +19,14 @@ static BOOL DYFSNativeSettingsRowAdded = NO;
 static NSUInteger DYFSInstallAttempts = 0;
 static BOOL DYFSSchedulePending = NO;
 static NSUInteger DYFSLayoutFixCount = 0;
+static NSUInteger DYFSInteractionContainerAdjustCount = 0;
 static NSUInteger DYFSTabBarApplyCount = 0;
 static BOOL DYFSLastHomeTabSelected = NO;
 static BOOL DYFSLastTabBackgroundHidden = NO;
 static BOOL DYFSSettingsEntryVisible = NO;
 static NSString *DYFSLastInstallSummary = @"尚未检测";
 static IMP DYFSOriginalFeedLayout = NULL;
+static IMP DYFSOriginalStoryLayout = NULL;
 static IMP DYFSOriginalSidebarIconMove = NULL;
 static IMP DYFSOriginalSidebarRightMove = NULL;
 static IMP DYFSOriginalTabBarLayout = NULL;
@@ -97,9 +100,11 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n底栏透明 Hook：%lu/2\n进度容器透明 Hook：%@\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n“首页全屏”开关会添加到抖音原生设置列表顶部。若未显示，请查看本页诊断中的“原生设置页开关”状态。点赞、评论、分享等功能区的位置和高度由 DYYY 管理。",
+        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动层边界 Hook：%@\n互动层边界调整次数：%lu\n底栏透明 Hook：%lu/2\n进度容器透明 Hook：%@\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n“首页全屏”会扩展视频列表，并将点赞/评论/分享及文案所在的整体互动层限定在底栏上方的可用区域；不逐项移动按钮或文案。请以实机显示为准。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
+        DYFSInstalledStory ? @"已安装" : @"未找到类",
+        (unsigned long)DYFSInteractionContainerAdjustCount,
         (unsigned long)DYFSTabBarHookCount(),
         DYFSInstalledProgressContainer ? @"已安装" : @"未找到类",
         (unsigned long)DYFSSidebarHookCount(),
@@ -185,7 +190,7 @@ static void DYFSOpenSettings(id sender);
     titleLabel.textColor = UIColor.labelColor;
 
     UILabel *descriptionLabel = [[UILabel alloc] init];
-    descriptionLabel.text = @"可在抖音原生“设置”列表中直接开关首页全屏；只扩展首页视频列表显示区域并处理底栏背景透明。不修改点赞、评论、分享等功能区位置或高度；该部分由 DYYY 管理。适配目标为抖音 40.7.0。";
+    descriptionLabel.text = @"可在抖音原生“设置”列表中开关首页全屏。视频列表扩展后，点赞、评论、分享和文案所在的整体互动层限制在底栏上方可用区域；不逐项修改按钮或文案位置。适配目标为抖音 40.7.0。";
     descriptionLabel.font = [UIFont systemFontOfSize:14];
     descriptionLabel.textColor = UIColor.secondaryLabelColor;
     descriptionLabel.numberOfLines = 0;
@@ -386,6 +391,76 @@ static BOOL DYFSSafeSetValueForKey(id object, id value, NSString *key) {
     }
 }
 
+static UIView *DYFSFindSubviewOfClass(UIView *root, NSString *className, NSUInteger depth) {
+    if (!root || depth > 14) return nil;
+    if ([NSStringFromClass(root.class) isEqualToString:className]) return root;
+    for (UIView *subview in root.subviews) {
+        UIView *match = DYFSFindSubviewOfClass(subview, className, depth + 1);
+        if (match) return match;
+    }
+    return nil;
+}
+
+static CGFloat DYFSBottomTabBarHeight(UIView *view) {
+    UIWindow *window = view.window;
+    if (window) {
+        UIView *tabBar = DYFSFindSubviewOfClass(window, @"AWENormalModeTabBar", 0);
+        CGFloat measured = CGRectGetHeight(tabBar.bounds);
+        if (tabBar && isfinite(measured) && measured >= 30.0 && measured < CGRectGetHeight(window.bounds)) {
+            return measured;
+        }
+        return 49.0 + MAX(0.0, window.safeAreaInsets.bottom);
+    }
+    return 49.0;
+}
+
+// Expand the feed canvas while keeping the interaction controller (right-side
+// actions, caption and other copy) within the usable area above the bottom
+// tab bar. Only the parent interaction container is sized; individual controls
+// and text views retain Douyin's own layout behavior.
+static void DYFSStoryContainerLayout(id self, SEL cmd) {
+    if (DYFSOriginalStoryLayout) {
+        ((void (*)(id, SEL))DYFSOriginalStoryLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+
+    UIView *container = (UIView *)self;
+    if (container.subviews.count == 2 || DYFSInProfileContext(container)) return;
+
+    id homeValue = DYFSSafeValueForKey(container, @"enableEnterProfile");
+    BOOL isHome = [homeValue respondsToSelector:@selector(boolValue)] && [homeValue boolValue];
+    if (!isHome) return;
+
+    for (UIView *subview in [container.subviews copy]) {
+        UIResponder *responder = subview.nextResponder;
+        NSString *responderName = responder ? NSStringFromClass(responder.class) : @"";
+        if (![responderName containsString:@"AWEPlayInteractionViewController"]) continue;
+
+        id baseViewController = DYFSSafeValueForKey(responder, @"awemeBaseViewController");
+        NSString *baseName = baseViewController ? NSStringFromClass([baseViewController class]) : @"";
+        if (![baseName containsString:@"AWEFeedCellViewController"]) continue;
+
+        UIView *parent = subview.superview;
+        if (!parent) continue;
+
+        CGFloat parentHeight = CGRectGetHeight(parent.bounds);
+        CGFloat tabBarHeight = DYFSBottomTabBarHeight(subview);
+        CGFloat targetHeight = parentHeight - tabBarHeight;
+        if (!isfinite(targetHeight) || targetHeight <= 1.0) continue;
+
+        CGRect frame = subview.frame;
+        CGFloat oldHeight = CGRectGetHeight(frame);
+        if (fabs(oldHeight - targetHeight) <= 0.5) continue;
+
+        frame.size.height = targetHeight;
+        subview.frame = frame;
+        DYFSInteractionContainerAdjustCount++;
+        DYFSLog([NSString stringWithFormat:
+            @"home interaction layer height %.2f -> %.2f (parent %.2f, tab bar %.2f)",
+            oldHeight, targetHeight, parentHeight, tabBarHeight]);
+    }
+}
+
 static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
     Class settingsClass = NSClassFromString(@"AWESettingsTableViewController");
     if (!controller || !settingsClass || ![controller isKindOfClass:settingsClass]) return;
@@ -430,7 +505,7 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
     id item = [[itemClass alloc] init];
     DYFSSafeSetValueForKey(item, itemIdentifier, @"identifier");
     DYFSSafeSetValueForKey(item, @"首页全屏（DY.FullScreen）", @"title");
-    DYFSSafeSetValueForKey(item, @"功能区位置和高度由 DYYY 管理。", @"subTitle");
+    DYFSSafeSetValueForKey(item, @"功能区和文案保留底栏上方的原始可用高度。", @"subTitle");
     DYFSSafeSetValueForKey(item, @"", @"detail");
     DYFSSafeSetValueForKey(item, @6, @"cellType");
     DYFSSafeSetValueForKey(item, @0, @"colorStyle");
@@ -453,7 +528,7 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
 
     id section = [[sectionClass alloc] init];
     DYFSSafeSetValueForKey(section, @"DY.FullScreen", @"sectionHeaderTitle");
-    DYFSSafeSetValueForKey(section, @"此开关控制 DY.FullScreen 首页区域效果。", @"sectionFooterTitle");
+    DYFSSafeSetValueForKey(section, @"只调整整体互动层边界，不逐项移动按钮或文案。", @"sectionFooterTitle");
     DYFSSafeSetValueForKey(section, @40, @"sectionHeaderHeight");
     DYFSSafeSetValueForKey(section, @YES, @"useNewFooterLayout");
     DYFSSafeSetValueForKey(section, @0, @"type");
@@ -612,6 +687,12 @@ static void DYFSInstallHooks(void) {
                                             (IMP)DYFSFeedTableLayout, &DYFSOriginalFeedLayout);
     }
 
+    cls = NSClassFromString(@"AWEStoryContainerCollectionView");
+    if (!DYFSInstalledStory && cls) {
+        DYFSInstalledStory = DYFSInstallHook(cls, @selector(layoutSubviews),
+                    (IMP)DYFSStoryContainerLayout, &DYFSOriginalStoryLayout);
+    }
+
     cls = NSClassFromString(@"AWELeftSideBarTopIconHorizontalView");
     if (!DYFSInstalledSidebarIcon && cls) {
         DYFSInstalledSidebarIcon = DYFSInstallHook(cls, @selector(didMoveToSuperview),
@@ -653,9 +734,9 @@ static void DYFSInstallHooks(void) {
                     (IMP)DYFSNativeSettingsDidAppear, &DYFSOriginalNativeSettingsDidAppear);
     }
 
-    NSString *summary = [NSString stringWithFormat:@"video-list hook %@; sidebar hooks %lu/2; tab bar hooks %lu/2; native settings switch hook %@; interaction-area resizing off; player-frame hook off",
-                         DYFSInstalledFeed ? @"on" : @"off", (unsigned long)DYFSSidebarHookCount(),
-                         (unsigned long)DYFSTabBarHookCount(),
+    NSString *summary = [NSString stringWithFormat:@"video-list hook %@; interaction-container hook %@; sidebar hooks %lu/2; tab bar hooks %lu/2; native settings switch hook %@; per-control frame changes off",
+                         DYFSInstalledFeed ? @"on" : @"off", DYFSInstalledStory ? @"on" : @"off",
+                         (unsigned long)DYFSSidebarHookCount(), (unsigned long)DYFSTabBarHookCount(),
                          DYFSInstalledNativeSettingsSwitch ? @"on" : @"off"];
     if (![summary isEqualToString:DYFSLastInstallSummary]) {
         DYFSLastInstallSummary = [summary copy];
@@ -672,7 +753,7 @@ static void DYFSScheduleHooks(void) {
         DYFSInstallAttempts++;
         DYFSInstallHooks();
 
-        BOOL layoutInstalled = DYFSInstalledFeed;
+        BOOL layoutInstalled = DYFSInstalledFeed && DYFSInstalledStory;
         BOOL sidebarInstalled = DYFSInstalledSidebarIcon || DYFSInstalledSidebarRight;
         BOOL tabBarInstalled = DYFSInstalledTabBarLayout && DYFSInstalledTabBarHidden;
         if ((!layoutInstalled || !sidebarInstalled || !tabBarInstalled || !DYFSInstalledNativeSettingsSwitch) &&
