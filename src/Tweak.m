@@ -351,7 +351,7 @@ static void DYFSApplyTabBarTransparency(UIView *tabBar) {
     BOOL shouldHideBackgrounds = enabled && isHomeSelected;
     CGFloat barHeight = CGRectGetHeight(tabBar.bounds);
     if (barHeight <= 0.0 || !isfinite(barHeight)) {
-        barHeight = DYFSBottomTabBarHeight(tabBar);
+        barHeight = 49.0 + MAX(0.0, tabBar.window.safeAreaInsets.bottom);
     }
 
     for (UIView *subview in [tabBar.subviews copy]) {
