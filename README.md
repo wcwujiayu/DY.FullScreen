@@ -3,13 +3,13 @@
 用于调整DY UI 的 Theos/Logos Tweak，仅在 **40.7.0** 中测试。  
 **仅供学习交流，禁止用于商业用途。**
 
-> 实验版本 0.3.0。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。已补入首页底栏背景/分割线隐藏和播放器容器高度调整逻辑；仍需在目标设备上验证实际视觉效果。
+> 实验版本 0.3.1。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。已补入首页底栏背景/分割线隐藏；不会调整点赞、评论、分享等功能区的位置或高度，相关布局由 DYYY 管理。仍需在目标设备上验证实际视觉效果。
 
 ## 自动构建
 
 仓库使用 Theos/Logos 构建流程，并尝试生成 rootful、rootless、roothide 三种 Debian 包，以及 TrollFools 使用的动态库。推送代码后查看仓库 Actions 页面中的构建任务；成功后在该次运行记录底部 Artifacts 下载构建结果。
 
-预期文件包括三种 .deb、DY.FullScreen_0.3.0.dylib、DY.FullScreen.dylib、DY.FullScreen-TrollFools-0.3.0.zip 和 SHA256SUMS.txt。版本标签（例如 v0.3.0）用于触发 GitHub Release 发布流程。
+预期文件包括三种 .deb、DY.FullScreen_0.3.1.dylib、DY.FullScreen.dylib、DY.FullScreen-TrollFools-0.3.1.zip 和 SHA256SUMS.txt。版本标签（例如 v0.3.1）用于触发 GitHub Release 发布流程。
 
 ## 安装与测试
 
