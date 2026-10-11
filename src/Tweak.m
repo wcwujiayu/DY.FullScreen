@@ -13,6 +13,8 @@ static BOOL DYFSInstalledSidebarRight = NO;
 static BOOL DYFSInstalledTabBarLayout = NO;
 static BOOL DYFSInstalledTabBarHidden = NO;
 static BOOL DYFSInstalledProgressContainer = NO;
+static BOOL DYFSInstalledNativeSettingsSwitch = NO;
+static BOOL DYFSNativeSettingsRowAdded = NO;
 static NSUInteger DYFSInstallAttempts = 0;
 static BOOL DYFSSchedulePending = NO;
 static NSUInteger DYFSLayoutFixCount = 0;
@@ -27,6 +29,7 @@ static IMP DYFSOriginalSidebarRightMove = NULL;
 static IMP DYFSOriginalTabBarLayout = NULL;
 static IMP DYFSOriginalTabBarHidden = NULL;
 static IMP DYFSOriginalProgressLayout = NULL;
+static IMP DYFSOriginalNativeSettingsDidAppear = NULL;
 
 static void DYFSLog(NSString *message) {
     NSLog(@"[DY.FullScreen] %@", message);
@@ -94,13 +97,15 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n底栏透明 Hook：%lu/2\n进度容器透明 Hook：%@\n侧边栏入口 Hook：%lu/2\n全屏入口按钮：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n请在抖音首页左侧边栏的系统“设置”图标附近寻找“全屏”按钮，点开后才会显示全屏总开关。点赞、评论、分享等功能区的位置和高度由 DYYY 管理。编译成功后仍需在实机确认入口显示。",
+        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n底栏透明 Hook：%lu/2\n进度容器透明 Hook：%@\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n“首页全屏”开关会添加到抖音原生设置列表顶部。若未显示，请查看本页诊断中的“原生设置页开关”状态。点赞、评论、分享等功能区的位置和高度由 DYYY 管理。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
         (unsigned long)DYFSTabBarHookCount(),
         DYFSInstalledProgressContainer ? @"已安装" : @"未找到类",
         (unsigned long)DYFSSidebarHookCount(),
-        DYFSSettingsEntryVisible ? @"已挂载" : @"未找到设置图标",
+        DYFSSettingsEntryVisible ? @"已挂载" : @"未找到侧边栏设置图标",
+        DYFSInstalledNativeSettingsSwitch ? @"已安装" : @"未找到 AWESettingsTableViewController",
+        DYFSNativeSettingsRowAdded ? @"已插入" : @"尚未插入（请打开一次抖音设置）",
         DYFSLastHomeTabSelected ? @"是" : @"否",
         DYFSLastTabBackgroundHidden ? @"是" : @"否",
         (unsigned long)DYFSTabBarApplyCount,
@@ -180,7 +185,7 @@ static void DYFSOpenSettings(id sender);
     titleLabel.textColor = UIColor.labelColor;
 
     UILabel *descriptionLabel = [[UILabel alloc] init];
-    descriptionLabel.text = @"只扩展首页视频列表显示区域，并处理底栏皮肤背景和分割线透明（保留功能按钮）。不修改点赞、评论、分享等视频功能区的位置或高度；如需调整功能区，请使用 DYYY。适配目标为抖音 40.7.0。";
+    descriptionLabel.text = @"可在抖音原生“设置”列表中直接开关首页全屏；只扩展首页视频列表显示区域并处理底栏背景透明。不修改点赞、评论、分享等功能区位置或高度；该部分由 DYYY 管理。适配目标为抖音 40.7.0。";
     descriptionLabel.font = [UIFont systemFontOfSize:14];
     descriptionLabel.textColor = UIColor.secondaryLabelColor;
     descriptionLabel.numberOfLines = 0;
@@ -370,6 +375,115 @@ static id DYFSSafeValueForKey(id object, NSString *key) {
     }
 }
 
+static BOOL DYFSSafeSetValueForKey(id object, id value, NSString *key) {
+    if (!object || key.length == 0) return NO;
+    @try {
+        [object setValue:value forKey:key];
+        return YES;
+    } @catch (NSException *exception) {
+        DYFSLog([NSString stringWithFormat:@"KVC set failed for %@: %@", key, exception.reason ?: @"unknown"]);
+        return NO;
+    }
+}
+
+static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
+    Class settingsClass = NSClassFromString(@"AWESettingsTableViewController");
+    if (!controller || !settingsClass || ![controller isKindOfClass:settingsClass]) return;
+
+    id viewModel = nil;
+    @try {
+        if ([controller respondsToSelector:@selector(viewModel)]) {
+            viewModel = ((id (*)(id, SEL))objc_msgSend)(controller, @selector(viewModel));
+        }
+    } @catch (NSException *exception) {
+        DYFSLog([NSString stringWithFormat:@"cannot get native settings view model: %@", exception.reason ?: @"unknown"]);
+        return;
+    }
+
+    id rawSections = DYFSSafeValueForKey(viewModel, @"sectionDataArray");
+    if (![rawSections isKindOfClass:NSArray.class]) {
+        DYFSLog(@"native settings sectionDataArray not ready; will retry next appearance");
+        return;
+    }
+    NSArray *sections = (NSArray *)rawSections;
+    NSString *itemIdentifier = DYFSEnabledKey;
+
+    for (id section in sections) {
+        id rawItems = DYFSSafeValueForKey(section, @"itemArray");
+        if (![rawItems isKindOfClass:NSArray.class]) continue;
+        for (id item in (NSArray *)rawItems) {
+            NSString *identifier = DYFSSafeValueForKey(item, @"identifier");
+            if (![identifier isEqualToString:itemIdentifier]) continue;
+            DYFSSafeSetValueForKey(item, @(DYFSIsEnabled()), @"isSwitchOn");
+            DYFSNativeSettingsRowAdded = YES;
+            return;
+        }
+    }
+
+    Class itemClass = NSClassFromString(@"AWESettingItemModel");
+    Class sectionClass = NSClassFromString(@"AWESettingSectionModel");
+    if (!itemClass || !sectionClass) {
+        DYFSLog(@"native settings item/section classes not found");
+        return;
+    }
+
+    id item = [[itemClass alloc] init];
+    DYFSSafeSetValueForKey(item, itemIdentifier, @"identifier");
+    DYFSSafeSetValueForKey(item, @"首页全屏（DY.FullScreen）", @"title");
+    DYFSSafeSetValueForKey(item, @"功能区位置和高度由 DYYY 管理。", @"subTitle");
+    DYFSSafeSetValueForKey(item, @"", @"detail");
+    DYFSSafeSetValueForKey(item, @6, @"cellType");
+    DYFSSafeSetValueForKey(item, @0, @"colorStyle");
+    DYFSSafeSetValueForKey(item, @YES, @"isEnable");
+    DYFSSafeSetValueForKey(item, @(DYFSIsEnabled()), @"isSwitchOn");
+    DYFSSafeSetValueForKey(item, @"ic_fullscreen_outlined_16", @"svgIconImageName");
+
+    __weak id weakItem = item;
+    void (^switchChangedBlock)(void) = ^{
+        id strongItem = weakItem;
+        if (!strongItem) return;
+        id currentValue = DYFSSafeValueForKey(strongItem, @"isSwitchOn");
+        BOOL newValue = ![currentValue respondsToSelector:@selector(boolValue)] || ![currentValue boolValue];
+        DYFSSafeSetValueForKey(strongItem, @(newValue), @"isSwitchOn");
+        [[NSUserDefaults standardUserDefaults] setBool:newValue forKey:DYFSEnabledKey];
+        DYFSLog(newValue ? @"native settings enabled homepage fullscreen" : @"native settings disabled homepage fullscreen");
+        DYFSRequestRelayout();
+    };
+    DYFSSafeSetValueForKey(item, [switchChangedBlock copy], @"switchChangedBlock");
+
+    id section = [[sectionClass alloc] init];
+    DYFSSafeSetValueForKey(section, @"DY.FullScreen", @"sectionHeaderTitle");
+    DYFSSafeSetValueForKey(section, @"此开关控制 DY.FullScreen 首页区域效果。", @"sectionFooterTitle");
+    DYFSSafeSetValueForKey(section, @40, @"sectionHeaderHeight");
+    DYFSSafeSetValueForKey(section, @YES, @"useNewFooterLayout");
+    DYFSSafeSetValueForKey(section, @0, @"type");
+    DYFSSafeSetValueForKey(section, @[item], @"itemArray");
+
+    NSMutableArray *updatedSections = [sections mutableCopy];
+    [updatedSections insertObject:section atIndex:0];
+    if (!DYFSSafeSetValueForKey(viewModel, updatedSections, @"sectionDataArray")) {
+        DYFSLog(@"failed to insert native settings section");
+        return;
+    }
+
+    id tableView = DYFSSafeValueForKey(controller, @"tableView");
+    if ([tableView isKindOfClass:UITableView.class]) {
+        [(UITableView *)tableView reloadData];
+    }
+    DYFSNativeSettingsRowAdded = YES;
+    DYFSLog(@"inserted homepage fullscreen switch in native Douyin Settings");
+}
+
+static void DYFSNativeSettingsDidAppear(id self, SEL cmd, BOOL animated) {
+    if (DYFSOriginalNativeSettingsDidAppear) {
+        ((void (*)(id, SEL, BOOL))DYFSOriginalNativeSettingsDidAppear)(self, cmd, animated);
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        DYFSEnsureNativeSettingsSwitch((UIViewController *)self);
+    });
+}
+
 static void DYFSApplyTabBarTransparency(UIView *tabBar) {
     if (!tabBar) return;
 
@@ -533,9 +647,16 @@ static void DYFSInstallHooks(void) {
                     (IMP)DYFSProgressContainerLayout, &DYFSOriginalProgressLayout);
     }
 
-    NSString *summary = [NSString stringWithFormat:@"video-list hook %@; sidebar hooks %lu/2; tab bar hooks %lu/2; interaction-area resizing off; player-frame hook off",
+    cls = NSClassFromString(@"AWESettingsTableViewController");
+    if (cls && !DYFSInstalledNativeSettingsSwitch) {
+        DYFSInstalledNativeSettingsSwitch = DYFSInstallHook(cls, @selector(viewDidAppear:),
+                    (IMP)DYFSNativeSettingsDidAppear, &DYFSOriginalNativeSettingsDidAppear);
+    }
+
+    NSString *summary = [NSString stringWithFormat:@"video-list hook %@; sidebar hooks %lu/2; tab bar hooks %lu/2; native settings switch hook %@; interaction-area resizing off; player-frame hook off",
                          DYFSInstalledFeed ? @"on" : @"off", (unsigned long)DYFSSidebarHookCount(),
-                         (unsigned long)DYFSTabBarHookCount()];
+                         (unsigned long)DYFSTabBarHookCount(),
+                         DYFSInstalledNativeSettingsSwitch ? @"on" : @"off"];
     if (![summary isEqualToString:DYFSLastInstallSummary]) {
         DYFSLastInstallSummary = [summary copy];
         DYFSLog(summary);
@@ -554,7 +675,7 @@ static void DYFSScheduleHooks(void) {
         BOOL layoutInstalled = DYFSInstalledFeed;
         BOOL sidebarInstalled = DYFSInstalledSidebarIcon || DYFSInstalledSidebarRight;
         BOOL tabBarInstalled = DYFSInstalledTabBarLayout && DYFSInstalledTabBarHidden;
-        if ((!layoutInstalled || !sidebarInstalled || !tabBarInstalled) &&
+        if ((!layoutInstalled || !sidebarInstalled || !tabBarInstalled || !DYFSInstalledNativeSettingsSwitch) &&
             DYFSInstallAttempts < 60) {
             DYFSScheduleHooks();
         }
