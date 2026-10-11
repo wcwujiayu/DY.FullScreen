@@ -3,21 +3,21 @@
 用于调整DY UI 的 Theos/Logos Tweak，仅在 **40.7.0** 中测试。  
 **仅供学习交流，禁止用于商业用途。**
 
-> 实验版本 0.3.10。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。设置入口与开关显示为“胖胖专属 / 插件开关”。0.3.10 调整评论页面底部输入栏透明方式：按底部输入栏的尺寸与位置识别整个背景区域，不依赖“爱评论的人运气不会差”提示文字；文字和按钮保留。全屏/直播与底栏透明修正沿用 0.3.9。
+> 实验版本 0.3.11。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。保留“胖胖专属 / 插件开关”。0.3.11 修复首屏视频布局时机：视频列表同时校正纵向起点和高度，播放器高度调整等待父容器尺寸稳定后才执行；个人主页“作品/喜欢”视频详情页单独透明化底部背景，不改变视频尺寸；视频内“相关搜索”和“合集”卡片只清除卡片背景，不隐藏文字和点击区域。底栏背景会在系统底栏子视图新增、视图加入窗口和布局时重复应用，以减少启动后恢复不透明的情况。若同时使用 DYYY，建议关闭其“全屏”总开关，保留其他不冲突的单项功能。
 
 ## 自动构建
 
-仓库使用 Theos/Logos 构建流程，并尝试生成 rootful、rootless、roothide 三种 Debian 包，以及 TrollFools 使用的动态库。推送代码后查看仓库 Actions 页面中的构建任务；成功后在该次运行记录底部 Artifacts 下载构建结果。
+仓库使用 Theos/Logos 构建流程，生成 rootful、rootless、roothide 三种 Debian 包，以及 TrollFools 使用的动态库。推送代码后查看仓库 Actions 页面中的构建任务；成功后在该次运行记录底部 Artifacts 下载构建结果。
 
-预期文件包括三种 .deb、DY.FullScreen_0.3.10.dylib、DY.FullScreen.dylib、DY.FullScreen-TrollFools-0.3.10.zip 和 SHA256SUMS.txt。版本标签（例如 v0.3.10）用于触发 GitHub Release 发布流程。
+预期文件包括三种 .deb、DY.FullScreen_0.3.11.dylib、DY.FullScreen.dylib、DY.FullScreen-TrollFools-0.3.11.zip 和 SHA256SUMS.txt。版本标签（例如 v0.3.11）用于触发 GitHub Release 发布流程。
 
 ## 安装与测试
 
 1. 从 Actions Artifacts 下载构建包并解压。
-2. 在 TrollFools 中停用并移除旧版，再注入本次构建的 DY.FullScreen.dylib（或 ZIP 内的 dylib）；.deb 是 Debian 包格式，不是首选注入文件。
+2. 在 TrollFools 中停用并移除旧版，再注入本次构建的 `DY.FullScreen.dylib`（或 ZIP 内的 dylib）；.deb 是 Debian 包格式，不是首选注入文件。
 3. 打开抖音侧边栏，在系统“设置”入口旁点击“胖胖专属”，检查开关和“运行诊断”。
-4. 测试前停用其他会修改抖音布局的插件，避免 Hook 冲突。
-5. 第一轮只检查首页视频与点赞、评论、分享等控件是否对齐。
+4. 测试时先停用其他会修改视频尺寸/布局的插件，避免 Hook 冲突。
+5. 第一轮依次检查首页视频、个人主页作品/喜欢的视频、相关搜索/合集卡片和评论输入栏背景。
 6. 若闪退或错位加重，立即在 TrollFools 停用本插件并重启抖音。
 
 ## 免责声明
