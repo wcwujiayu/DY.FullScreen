@@ -18,7 +18,6 @@ static BOOL DYFSInstalledSidebarIcon = NO;
 static BOOL DYFSInstalledSidebarRight = NO;
 static BOOL DYFSInstalledTabBarLayout = NO;
 static BOOL DYFSInstalledTabBarHidden = NO;
-static BOOL DYFSInstalledProgressContainer = NO;
 static BOOL DYFSInstalledNativeSettingsSwitch = NO;
 static BOOL DYFSNativeSettingsRowAdded = NO;
 static NSUInteger DYFSInstallAttempts = 0;
@@ -44,7 +43,6 @@ static IMP DYFSOriginalSidebarIconMove = NULL;
 static IMP DYFSOriginalSidebarRightMove = NULL;
 static IMP DYFSOriginalTabBarLayout = NULL;
 static IMP DYFSOriginalTabBarHidden = NULL;
-static IMP DYFSOriginalProgressLayout = NULL;
 static IMP DYFSOriginalNativeSettingsDidAppear = NULL;
 
 static void DYFSLog(NSString *message) {
@@ -113,7 +111,7 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播文案布局 Hook：%@\n底栏透明 Hook：%lu/2\n进度容器透明 Hook：%@\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n开关名称仅为“首页全屏”。普通视频、图集与直播预告通过播放器、互动控制器和直播文案布局分别处理；不逐项移动点赞/评论/分享按钮。",
+        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播文案布局 Hook：%@\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n开关名称仅为“首页全屏”。普通视频、图集与直播预告通过播放器、互动控制器和直播文案布局分别处理；不逐项移动点赞/评论/分享按钮。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
         DYFSInstalledInteractionController ? @"已安装" : @"未找到类",
@@ -121,7 +119,6 @@ static NSString *DYFSStatusText(void) {
         (unsigned long)DYFSPlayerContentAdjustCount,
         DYFSInstalledLiveStack ? @"已安装" : @"未找到类",
         (unsigned long)DYFSTabBarHookCount(),
-        DYFSInstalledProgressContainer ? @"已安装" : @"未找到类",
         (unsigned long)DYFSSidebarHookCount(),
         DYFSSettingsEntryVisible ? @"已挂载" : @"未找到侧边栏设置图标",
         DYFSInstalledNativeSettingsSwitch ? @"已安装" : @"未找到 AWESettingsTableViewController",
@@ -640,6 +637,9 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
         for (id item in (NSArray *)rawItems) {
             NSString *identifier = DYFSSafeValueForKey(item, @"identifier");
             if (![identifier isEqualToString:itemIdentifier]) continue;
+            DYFSSafeSetValueForKey(item, @"首页全屏", @"title");
+            DYFSSafeSetValueForKey(item, @"胖胖专用工具", @"subTitle");
+            DYFSSafeSetValueForKey(item, @"", @"detail");
             DYFSSafeSetValueForKey(item, @(DYFSIsEnabled()), @"isSwitchOn");
             DYFSNativeSettingsRowAdded = YES;
             return;
@@ -656,7 +656,7 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
     id item = [[itemClass alloc] init];
     DYFSSafeSetValueForKey(item, itemIdentifier, @"identifier");
     DYFSSafeSetValueForKey(item, @"首页全屏", @"title");
-    DYFSSafeSetValueForKey(item, @"", @"subTitle");
+    DYFSSafeSetValueForKey(item, @"胖胖专用工具", @"subTitle");
     DYFSSafeSetValueForKey(item, @"", @"detail");
     DYFSSafeSetValueForKey(item, @6, @"cellType");
     DYFSSafeSetValueForKey(item, @0, @"colorStyle");
@@ -779,18 +779,6 @@ static void DYFSTabBarSetHidden(id self, SEL cmd, BOOL hidden) {
     DYFSApplyTabBarTransparency((UIView *)self);
 }
 
-static void DYFSProgressContainerLayout(id self, SEL cmd) {
-    if (DYFSOriginalProgressLayout) ((void (*)(id, SEL))DYFSOriginalProgressLayout)(self, cmd);
-    if (!DYFSIsEnabled()) return;
-
-    UIView *container = (UIView *)self;
-    for (UIView *subview in [container.subviews copy]) {
-        if ([subview class] == UIView.class) {
-            subview.backgroundColor = UIColor.clearColor;
-        }
-    }
-}
-
 static void DYFSFeedTableLayout(id self, SEL cmd) {
     if (DYFSOriginalFeedLayout) ((void (*)(id, SEL))DYFSOriginalFeedLayout)(self, cmd);
     if (!DYFSIsEnabled()) return;
@@ -901,12 +889,6 @@ static void DYFSInstallHooks(void) {
     if (cls && !DYFSInstalledTabBarHidden) {
         DYFSInstalledTabBarHidden = DYFSInstallHook(cls, @selector(setHidden:),
                     (IMP)DYFSTabBarSetHidden, &DYFSOriginalTabBarHidden);
-    }
-
-    cls = NSClassFromString(@"AWEPlayInteractionProgressContainerView");
-    if (cls && !DYFSInstalledProgressContainer) {
-        DYFSInstalledProgressContainer = DYFSInstallHook(cls, @selector(layoutSubviews),
-                    (IMP)DYFSProgressContainerLayout, &DYFSOriginalProgressLayout);
     }
 
     cls = NSClassFromString(@"AWESettingsTableViewController");
