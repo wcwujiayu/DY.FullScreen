@@ -1,0 +1,101 @@
+name: Build DY.FullScreen
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build rootful, rootless, roothide and dylib
+    runs-on: macos-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Prepare Theos
+        uses: huami1314/theos-action@main
+
+      - name: Setup GNU Make
+        run: echo "$(brew --prefix)/opt/make/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Install packaging utilities
+        run: brew install dpkg
+
+      - name: Prepare output folders
+        run: rm -rf packages dist && mkdir -p packages dist
+
+      - name: Build rootful package
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf packages && mkdir -p packages
+          make package SCHEME=rootful FINALPACKAGE=1 -j"$(sysctl -n hw.ncpu)"
+          shopt -s nullglob
+          files=(packages/*.deb)
+          if [ "${#files[@]}" -ne 1 ]; then echo "Expected one rootful package, got ${#files[@]}" >&2; exit 1; fi
+          mv "${files[0]}" dist/com.dy.fullscreen_0.1.0_iphoneos-arm-rootful.deb
+
+      - name: Build rootless package
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf packages .theos && mkdir -p packages
+          make package SCHEME=rootless FINALPACKAGE=1 -j"$(sysctl -n hw.ncpu)"
+          shopt -s nullglob
+          files=(packages/*.deb)
+          if [ "${#files[@]}" -ne 1 ]; then echo "Expected one rootless package, got ${#files[@]}" >&2; exit 1; fi
+          mv "${files[0]}" dist/com.dy.fullscreen_0.1.0_iphoneos-arm64-rootless.deb
+
+      - name: Build roothide package
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf packages .theos && mkdir -p packages
+          make package SCHEME=roothide FINALPACKAGE=1 -j"$(sysctl -n hw.ncpu)"
+          shopt -s nullglob
+          files=(packages/*.deb)
+          if [ "${#files[@]}" -ne 1 ]; then echo "Expected one roothide package, got ${#files[@]}" >&2; exit 1; fi
+          mv "${files[0]}" dist/com.dy.fullscreen_0.1.0_iphoneos-arm64e-roothide.deb
+
+      - name: Export dylib and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/dy-fullscreen-rootless"
+          rm -rf "$stage" && mkdir -p "$stage"
+          dpkg-deb -x dist/com.dy.fullscreen_0.1.0_iphoneos-arm64-rootless.deb "$stage"
+          dylib="$(find "$stage" -type f -name 'DY.FullScreen.dylib' -print -quit)"
+          if [[ -z "$dylib" ]]; then
+            echo "DY.FullScreen.dylib not found inside rootless package" >&2
+            find "$stage" -type f -print >&2 || true
+            exit 1
+          fi
+          cp "$dylib" dist/DY.FullScreen_0.1.0.dylib
+          cp "$dylib" dist/DY.FullScreen.dylib
+          (cd dist && zip -q -j DY.FullScreen-TrollFools-0.1.0.zip DY.FullScreen.dylib)
+          (cd dist && shasum -a 256 *.deb *.dylib *.zip > SHA256SUMS.txt)
+          ls -lah dist
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: DY.FullScreen-build
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release for version tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: DY.FullScreen ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/*
