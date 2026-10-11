@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <math.h>
@@ -612,6 +613,25 @@ static void DYFSClearViewBackgroundOnly(UIView *view) {
     view.backgroundColor = UIColor.clearColor;
     view.layer.backgroundColor = UIColor.clearColor.CGColor;
     view.opaque = NO;
+
+    // Some cards use a gradient or shape sublayer instead of UIView.backgroundColor.
+    // Clear only sublayers that cover most of this view; keep glyph/icon layers intact.
+    CGFloat boundsWidth = CGRectGetWidth(view.bounds);
+    CGFloat boundsHeight = CGRectGetHeight(view.bounds);
+    for (CALayer *layer in [view.layer.sublayers copy]) {
+        CGFloat width = CGRectGetWidth(layer.frame);
+        CGFloat height = CGRectGetHeight(layer.frame);
+        BOOL fillsView = boundsWidth > 0.0 && boundsHeight > 0.0 &&
+            width >= boundsWidth * 0.82 && height >= boundsHeight * 0.68;
+        if (!fillsView) continue;
+
+        layer.backgroundColor = UIColor.clearColor.CGColor;
+        if ([layer isKindOfClass:CAGradientLayer.class]) {
+            ((CAGradientLayer *)layer).colors = nil;
+        } else if ([layer isKindOfClass:CAShapeLayer.class]) {
+            ((CAShapeLayer *)layer).fillColor = UIColor.clearColor.CGColor;
+        }
+    }
     // Text attributes, alpha, icons, interaction state, frame and transforms remain untouched.
 }
 
