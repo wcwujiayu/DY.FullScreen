@@ -270,6 +270,41 @@ static UIViewController *DYFSActiveTopViewController(void) {
     return controller;
 }
 
+// Protect the active live room from player-size and background transparency changes.
+// The pre-stream screen has a different controller and remains eligible for its
+// narrowly scoped player-container height correction.
+static BOOL DYFSClassNameIsLiveRoom(NSString *name) {
+    if (name.length == 0) return NO;
+    return [name containsString:@"IESLiveAudienceViewController"] ||
+           [name containsString:@"AWELiveAudienceViewController"] ||
+           [name containsString:@"IESLiveInnerFeedLiveRoomCell"] ||
+           [name containsString:@"LiveRoomViewController"] ||
+           [name containsString:@"LiveRoomContainerViewController"];
+}
+
+static BOOL DYFSIsActualLiveRoomContext(UIView *view) {
+    for (UIView *cursor = view; cursor; cursor = cursor.superview) {
+        if (DYFSClassNameIsLiveRoom(NSStringFromClass(cursor.class))) return YES;
+    }
+
+    UIResponder *responder = view;
+    for (NSUInteger depth = 0; responder && depth < 40; depth++, responder = responder.nextResponder) {
+        if (DYFSClassNameIsLiveRoom(NSStringFromClass(responder.class))) return YES;
+    }
+
+    UIViewController *controller = DYFSFindViewController(view);
+    for (NSUInteger depth = 0; controller && depth < 20; depth++, controller = controller.parentViewController) {
+        if (DYFSClassNameIsLiveRoom(NSStringFromClass(controller.class))) return YES;
+    }
+
+    // The preview/live player can be a sibling of the active room controller.
+    UIViewController *active = DYFSActiveTopViewController();
+    for (NSUInteger depth = 0; active && depth < 20; depth++, active = active.parentViewController) {
+        if (DYFSClassNameIsLiveRoom(NSStringFromClass(active.class))) return YES;
+    }
+    return NO;
+}
+
 static void DYFSOpenSettings(id sender);
 
 @interface DYFSSettingsActionTarget : NSObject
@@ -708,7 +743,7 @@ static void DYFSClearOverlappingBackgroundSiblings(UIView *anchor, UIView *root,
 }
 
 static void DYFSApplyRecommendationTransparencyInView(UIView *root) {
-    if (!root || !DYFSIsEnabled()) return;
+    if (!root || !DYFSIsEnabled() || DYFSIsActualLiveRoomContext(root)) return;
     CGFloat rootWidth = CGRectGetWidth(root.bounds);
     CGFloat rootHeight = CGRectGetHeight(root.bounds);
     if (rootWidth < 100.0 || rootHeight < 160.0) return;
@@ -781,7 +816,7 @@ static void DYFSClearCommentDockBackground(UIView *dock, NSUInteger depth) {
 }
 
 static void DYFSApplyVideoDetailBottomTransparencyInView(UIView *root) {
-    if (!root || !DYFSIsEnabled()) return;
+    if (!root || !DYFSIsEnabled() || DYFSIsActualLiveRoomContext(root)) return;
     NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
     while (pending.count > 0) {
         UIView *view = pending.lastObject;
@@ -865,7 +900,7 @@ static void DYFSInteractionControllerLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
     DYFSApplyRecommendationTransparencyInView(view);
     if (view.superview) DYFSApplyRecommendationTransparencyInView(view.superview);
-    if (!view || !view.superview || DYFSInProfileContext(view) || DYFSIsLivePreStreamContext(view) || DYFSIsLivePreStreamPlayer(controller)) return;
+    if (!view || !view.superview || DYFSInProfileContext(view) || DYFSIsActualLiveRoomContext(view) || DYFSIsLivePreStreamContext(view) || DYFSIsLivePreStreamPlayer(controller)) return;
     if (!DYFSIsFeedCellInteractionController(controller)) return;
 
     UIView *parent = view.superview;
@@ -898,10 +933,12 @@ static void DYFSApplyPlayerContentHeightNow(id playerController) {
     // Unlike an active live room, the pre-stream preview is a screen that the
     // user explicitly wants adjusted. Some builds host its player in a sibling
     // controller, so use the active pre-stream context as a positive match too.
+    if (DYFSIsActualLiveRoomContext(controllerView)) return;
     BOOL isLivePreStream = DYFSIsLivePreStreamPlayer(playerController) ||
         DYFSIsLivePreStreamContext(controllerView);
 
     UIView *contentView = DYFSSafeValueForKey(playerController, @"contentView");
+    if (DYFSIsActualLiveRoomContext(contentView)) return;
     if (DYFSIsLivePreStreamContext(contentView)) isLivePreStream = YES;
     if (DYFSInProfileContext(controllerView) || DYFSInProfileContext(contentView) ||
         DYFSIsDetailVideoContext(controllerView) || DYFSIsDetailVideoContext(contentView)) {
@@ -1049,7 +1086,7 @@ static void DYFSLiveElementStackLayout(id self, SEL cmd) {
     }
     // This stack is also a direct host for feed's related-search and collection pills.
     // Scan after the native layout pass so their background plates are actually present.
-    if (DYFSIsEnabled()) {
+    if (DYFSIsEnabled() && !DYFSIsActualLiveRoomContext((UIView *)self)) {
         DYFSApplyRecommendationTransparencyInView((UIView *)self);
         if (((UIView *)self).superview) {
             DYFSApplyRecommendationTransparencyInView(((UIView *)self).superview);
@@ -1068,7 +1105,7 @@ static void DYFSStoryContainerLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
 
     UIView *container = (UIView *)self;
-    if (DYFSInProfileContext(container) || DYFSIsLivePreStreamContext(container)) return;
+    if (DYFSInProfileContext(container) || DYFSIsActualLiveRoomContext(container) || DYFSIsLivePreStreamContext(container)) return;
 
     id homeValue = DYFSSafeValueForKey(container, @"enableEnterProfile");
     BOOL isHome = [homeValue respondsToSelector:@selector(boolValue)] && [homeValue boolValue];
@@ -1420,6 +1457,7 @@ static void DYFSCommentPanelLayout(id self, SEL cmd) {
 
     UIViewController *controller = (UIViewController *)self;
     UIView *root = controller.view;
+    if (DYFSIsActualLiveRoomContext(root)) return;
     UIView *bar = DYFSFindCommentInputBar(root);
     if (!bar) return;
 
@@ -1433,6 +1471,7 @@ static void DYFSCommentInputContainerLayout(id self, SEL cmd) {
     }
     if (!DYFSIsEnabled()) return;
     UIView *view = (UIView *)self;
+    if (DYFSIsActualLiveRoomContext(view)) return;
     DYFSClearCommentDockBackground(view, 0);
     DYFSClearOverlappingBackgroundSiblings(view, view.superview ?: view, 180.0);
     DYFSCommentBarTransparencyApplyCount++;
@@ -1455,6 +1494,7 @@ static void DYFSCommentInputControllerLayout(id self, SEL cmd) {
     }
     if (!DYFSIsEnabled()) return;
     UIViewController *controller = (UIViewController *)self;
+    if (DYFSIsActualLiveRoomContext(controller.view)) return;
     DYFSApplyVideoDetailBottomTransparencyInView(controller.view);
     if (controller.view.superview) {
         DYFSApplyVideoDetailBottomTransparencyInView(controller.view.superview);
@@ -1467,7 +1507,7 @@ static void DYFSFeedTableLayout(id self, SEL cmd) {
 
     UIView *view = (UIView *)self;
     UIView *parent = view.superview;
-    if (!parent || DYFSInProfileContext(view) || DYFSIsLivePreStreamContext(view)) return;
+    if (!parent || DYFSInProfileContext(view) || DYFSIsActualLiveRoomContext(view) || DYFSIsLivePreStreamContext(view)) return;
     CGRect frame = view.frame;
     CGFloat targetHeight = CGRectGetHeight(parent.bounds);
     if (!isfinite(targetHeight) || targetHeight <= 1.0) return;
