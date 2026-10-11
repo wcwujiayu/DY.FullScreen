@@ -143,7 +143,7 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播预览原位保护：%@\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n设置项名称为“胖胖专属 / 插件开关”。普通视频与图集全屏独立调整；直播预览不做尺寸/位移修改，避免视频、文案与“点击进入直播间”错位。评论页面底部输入栏背景透明处理次数：%lu。",
+        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播预览原位保护：%@\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n设置项名称为“首页全屏 / 胖胖专属”。普通视频与图集全屏独立调整；直播预览不做尺寸/位移修改，避免视频、文案与“点击进入直播间”错位。评论页面底部输入栏背景透明处理次数：%lu。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
         DYFSInstalledInteractionController ? @"已安装" : @"未找到类",
@@ -1125,10 +1125,15 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
         for (id item in (NSArray *)rawItems) {
             NSString *identifier = DYFSSafeValueForKey(item, @"identifier");
             if (![identifier isEqualToString:itemIdentifier]) continue;
-            DYFSSafeSetValueForKey(item, @"胖胖专属", @"title");
-            DYFSSafeSetValueForKey(item, @"插件开关", @"subTitle");
+            DYFSSafeSetValueForKey(item, @"首页全屏", @"title");
+            DYFSSafeSetValueForKey(item, @"胖胖专属", @"subTitle");
             DYFSSafeSetValueForKey(item, @"", @"detail");
             DYFSSafeSetValueForKey(item, @(DYFSIsEnabled()), @"isSwitchOn");
+            // Existing rows can already have a cached native settings cell; reload after renaming.
+            id existingTableView = DYFSSafeValueForKey(controller, @"tableView");
+            if ([existingTableView isKindOfClass:UITableView.class]) {
+                [(UITableView *)existingTableView reloadData];
+            }
             DYFSNativeSettingsRowAdded = YES;
             return;
         }
@@ -1143,8 +1148,8 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
 
     id item = [[itemClass alloc] init];
     DYFSSafeSetValueForKey(item, itemIdentifier, @"identifier");
-    DYFSSafeSetValueForKey(item, @"胖胖专属", @"title");
-    DYFSSafeSetValueForKey(item, @"插件开关", @"subTitle");
+    DYFSSafeSetValueForKey(item, @"首页全屏", @"title");
+    DYFSSafeSetValueForKey(item, @"胖胖专属", @"subTitle");
     DYFSSafeSetValueForKey(item, @"", @"detail");
     DYFSSafeSetValueForKey(item, @6, @"cellType");
     DYFSSafeSetValueForKey(item, @0, @"colorStyle");
