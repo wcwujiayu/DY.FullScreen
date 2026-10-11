@@ -11,16 +11,27 @@ static BOOL DYFSInstalledFeed = NO;
 static BOOL DYFSInstalledStory = NO;
 static BOOL DYFSInstalledSidebarIcon = NO;
 static BOOL DYFSInstalledSidebarRight = NO;
+static BOOL DYFSInstalledTabBarLayout = NO;
+static BOOL DYFSInstalledTabBarHidden = NO;
+static BOOL DYFSInstalledPlayerFrame = NO;
+static BOOL DYFSInstalledProgressContainer = NO;
 static NSUInteger DYFSInstallAttempts = 0;
 static BOOL DYFSSchedulePending = NO;
 static NSUInteger DYFSLayoutFixCount = 0;
+static NSUInteger DYFSTabBarApplyCount = 0;
 static BOOL DYFSFoundHomeInteractionView = NO;
+static BOOL DYFSLastHomeTabSelected = NO;
+static BOOL DYFSLastTabBackgroundHidden = NO;
 static BOOL DYFSSettingsEntryVisible = NO;
 static NSString *DYFSLastInstallSummary = @"尚未检测";
 static IMP DYFSOriginalFeedLayout = NULL;
 static IMP DYFSOriginalStoryLayout = NULL;
 static IMP DYFSOriginalSidebarIconMove = NULL;
 static IMP DYFSOriginalSidebarRightMove = NULL;
+static IMP DYFSOriginalTabBarLayout = NULL;
+static IMP DYFSOriginalTabBarHidden = NULL;
+static IMP DYFSOriginalUIViewSetFrame = NULL;
+static IMP DYFSOriginalProgressLayout = NULL;
 
 static void DYFSLog(NSString *message) {
     NSLog(@"[DY.FullScreen] %@", message);
@@ -74,6 +85,10 @@ static NSUInteger DYFSSidebarHookCount(void) {
     return (DYFSInstalledSidebarIcon ? 1 : 0) + (DYFSInstalledSidebarRight ? 1 : 0);
 }
 
+static NSUInteger DYFSTabBarHookCount(void) {
+    return (DYFSInstalledTabBarLayout ? 1 : 0) + (DYFSInstalledTabBarHidden ? 1 : 0);
+}
+
 static UIView *DYFSFindSubviewOfClass(UIView *root, NSString *className, NSUInteger depth) {
     if (!root || depth > 14) return nil;
     if ([NSStringFromClass(root.class) isEqualToString:className]) return root;
@@ -109,11 +124,17 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页列表 Hook：%@\n互动容器 Hook：%@\n设置入口 Hook：%lu/2\n已识别首页互动视图：%@\n本次运行的布局调整次数：%lu\n\n若 Hook 显示未安装，请确认 TrollFools 注入的是本次构建的 DY.FullScreen.dylib。若 Hook 已安装但没有布局调整，说明当前页面的视图层级或内部类名与适配逻辑不一致。",
+        @"抖音版本：%@\n全屏开关：%@\n首页列表 Hook：%@\n互动容器 Hook：%@\n底栏透明 Hook：%lu/2\n播放器 Frame Hook：%@\n进度容器透明 Hook：%@\n设置入口 Hook：%lu/2\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n已识别首页互动视图：%@\n本次运行的布局调整次数：%lu\n\n若底栏透明 Hook 未安装，请确认抖音 40.7.0 内部类名是否匹配。编译通过只代表构建成功，仍需在实机检查视觉效果。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
         DYFSInstalledStory ? @"已安装" : @"未找到类",
+        (unsigned long)DYFSTabBarHookCount(),
+        DYFSInstalledPlayerFrame ? @"已安装" : @"未安装",
+        DYFSInstalledProgressContainer ? @"已安装" : @"未找到类",
         (unsigned long)DYFSSidebarHookCount(),
+        DYFSLastHomeTabSelected ? @"是" : @"否",
+        DYFSLastTabBackgroundHidden ? @"是" : @"否",
+        (unsigned long)DYFSTabBarApplyCount,
         DYFSFoundHomeInteractionView ? @"是" : @"否",
         (unsigned long)DYFSLayoutFixCount];
 }
@@ -191,7 +212,7 @@ static void DYFSOpenSettings(id sender);
     titleLabel.textColor = UIColor.labelColor;
 
     UILabel *descriptionLabel = [[UILabel alloc] init];
-    descriptionLabel.text = @"开启后尝试让首页视频列表铺满容器，并按底部导航栏高度调整互动容器。适配目标为抖音 40.7.0。";
+    descriptionLabel.text = @"参考 DYYY 的首页全屏行为：扩展首页视频区域、按底栏高度调整互动容器，并在首页隐藏底栏皮肤背景及分割线（保留功能按钮）。适配目标为抖音 40.7.0。";
     descriptionLabel.font = [UIFont systemFontOfSize:14];
     descriptionLabel.textColor = UIColor.secondaryLabelColor;
     descriptionLabel.numberOfLines = 0;
@@ -320,6 +341,140 @@ static void DYFSScanForSettingsEntry(UIView *root, NSUInteger depth) {
 }
 
 
+static id DYFSSafeValueForKey(id object, NSString *key) {
+    if (!object || key.length == 0) return nil;
+    @try {
+        return [object valueForKey:key];
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
+static void DYFSApplyTabBarTransparency(UIView *tabBar) {
+    if (!tabBar) return;
+
+    BOOL enabled = DYFSIsEnabled();
+    Class generalButtonClass = NSClassFromString(@"AWENormalModeTabBarGeneralButton");
+    Class plusButtonClass = NSClassFromString(@"AWENormalModeTabBarGeneralPlusButton");
+    Class barBackgroundClass = NSClassFromString(@"_UIBarBackground");
+
+    BOOL isHomeSelected = NO;
+    for (UIView *subview in [tabBar.subviews copy]) {
+        if (!generalButtonClass || ![subview isKindOfClass:generalButtonClass]) continue;
+        NSString *label = subview.accessibilityLabel ?: @"";
+        id status = DYFSSafeValueForKey(subview, @"status");
+        BOOL selected = [status respondsToSelector:@selector(integerValue)] && [status integerValue] == 2;
+        if (selected && [label isEqualToString:@"首页"]) {
+            isHomeSelected = YES;
+        }
+    }
+
+    // DYYY hides the skin layer while full-screen is active, and hides the
+    // actual bar background only while the Home tab is selected. Buttons stay
+    // visible/tappable; only background layers and the hairline are hidden.
+    id skinContainer = DYFSSafeValueForKey(tabBar, @"skinContainerView");
+    if ([skinContainer isKindOfClass:UIView.class]) {
+        ((UIView *)skinContainer).hidden = enabled;
+    }
+
+    BOOL shouldHideBackgrounds = enabled && isHomeSelected;
+    CGFloat barHeight = CGRectGetHeight(tabBar.bounds);
+    if (barHeight <= 0.0 || !isfinite(barHeight)) {
+        barHeight = DYFSBottomTabBarHeight(tabBar);
+    }
+
+    for (UIView *subview in [tabBar.subviews copy]) {
+        if ((generalButtonClass && [subview isKindOfClass:generalButtonClass]) ||
+            (plusButtonClass && [subview isKindOfClass:plusButtonClass])) {
+            continue;
+        }
+
+        CGFloat subviewHeight = CGRectGetHeight(subview.frame);
+        CGFloat subviewWidth = CGRectGetWidth(subview.frame);
+        BOOL isBackgroundView = (barBackgroundClass && [subview isKindOfClass:barBackgroundClass]) ||
+            ([subview isMemberOfClass:UIView.class] &&
+             barHeight > 0.0 && fabs(subviewHeight - barHeight) < 1.0);
+        BOOL isDivider = (subviewHeight > 0.0 && subviewHeight < 1.0 && subviewWidth > 300.0);
+
+        if (isBackgroundView) {
+            subview.hidden = shouldHideBackgrounds;
+        }
+        if (isDivider) {
+            subview.hidden = enabled;
+        }
+    }
+
+    DYFSLastHomeTabSelected = isHomeSelected;
+    DYFSLastTabBackgroundHidden = shouldHideBackgrounds;
+    DYFSTabBarApplyCount++;
+}
+
+static void DYFSTabBarLayout(id self, SEL cmd) {
+    if (DYFSOriginalTabBarLayout) ((void (*)(id, SEL))DYFSOriginalTabBarLayout)(self, cmd);
+    DYFSApplyTabBarTransparency((UIView *)self);
+}
+
+static void DYFSTabBarSetHidden(id self, SEL cmd, BOOL hidden) {
+    if (DYFSOriginalTabBarHidden) ((void (*)(id, SEL, BOOL))DYFSOriginalTabBarHidden)(self, cmd, hidden);
+    DYFSApplyTabBarTransparency((UIView *)self);
+}
+
+static void DYFSProgressContainerLayout(id self, SEL cmd) {
+    if (DYFSOriginalProgressLayout) ((void (*)(id, SEL))DYFSOriginalProgressLayout)(self, cmd);
+    if (!DYFSIsEnabled()) return;
+
+    UIView *container = (UIView *)self;
+    for (UIView *subview in [container.subviews copy]) {
+        if ([subview class] == UIView.class) {
+            subview.backgroundColor = UIColor.clearColor;
+        }
+    }
+}
+
+static BOOL DYFSViewBelongsToPlayerController(UIView *view) {
+    UIViewController *controller = DYFSFindViewController(view);
+    if (!controller) return NO;
+    NSString *name = NSStringFromClass(controller.class);
+    return [name isEqualToString:@"AWEAwemePlayVideoViewController"] ||
+           [name isEqualToString:@"AWEDPlayerFeedPlayerViewController"] ||
+           [name isEqualToString:@"AWEDPlayerViewController_Merge"];
+}
+
+static void DYFSUIViewSetFrame(id self, SEL cmd, CGRect frame) {
+    if (!DYFSOriginalUIViewSetFrame) return;
+
+    UIView *view = [self isKindOfClass:UIView.class] ? (UIView *)self : nil;
+    if (!view || !DYFSIsEnabled() || ![NSThread isMainThread] ||
+        !DYFSViewBelongsToPlayerController(view)) {
+        ((void (*)(id, SEL, CGRect))DYFSOriginalUIViewSetFrame)(self, cmd, frame);
+        return;
+    }
+
+    // Port the narrow DYYY condition: only extend a player view when its
+    // current target frame is exactly one bottom-bar height shorter than its
+    // superview. Avoid applying global screen offsets/transforms.
+    if (frame.origin.x != 0.0 && frame.origin.y != 0.0) {
+        ((void (*)(id, SEL, CGRect))DYFSOriginalUIViewSetFrame)(self, cmd, frame);
+        return;
+    }
+
+    UIView *parent = view.superview;
+    if (parent) {
+        CGFloat parentHeight = CGRectGetHeight(parent.frame);
+        CGFloat frameHeight = CGRectGetHeight(frame);
+        CGFloat diff = parentHeight - frameHeight;
+        CGFloat bottomBarHeight = DYFSBottomTabBarHeight(view);
+        if (parentHeight > 0.0 && frameHeight > 0.0 && frameHeight < parentHeight &&
+            bottomBarHeight > 0.0 && fabs(diff - bottomBarHeight) < 1.0) {
+            frame.size.height = parentHeight;
+            DYFSLayoutFixCount++;
+            DYFSLog([NSString stringWithFormat:@"player view extended to parent height %.2f", parentHeight]);
+        }
+    }
+
+    ((void (*)(id, SEL, CGRect))DYFSOriginalUIViewSetFrame)(self, cmd, frame);
+}
+
 static void DYFSFeedTableLayout(id self, SEL cmd) {
     if (DYFSOriginalFeedLayout) ((void (*)(id, SEL))DYFSOriginalFeedLayout)(self, cmd);
     if (!DYFSIsEnabled()) return;
@@ -443,8 +598,31 @@ static void DYFSInstallHooks(void) {
         }
     }
 
-    NSString *summary = [NSString stringWithFormat:@"layout hooks %lu/2; sidebar hooks %lu/2",
-                         (unsigned long)DYFSLayoutHookCount(), (unsigned long)DYFSSidebarHookCount()];
+    cls = NSClassFromString(@"AWENormalModeTabBar");
+    if (cls && !DYFSInstalledTabBarLayout) {
+        DYFSInstalledTabBarLayout = DYFSInstallHook(cls, @selector(layoutSubviews),
+                    (IMP)DYFSTabBarLayout, &DYFSOriginalTabBarLayout);
+    }
+    if (cls && !DYFSInstalledTabBarHidden) {
+        DYFSInstalledTabBarHidden = DYFSInstallHook(cls, @selector(setHidden:),
+                    (IMP)DYFSTabBarSetHidden, &DYFSOriginalTabBarHidden);
+    }
+
+    cls = NSClassFromString(@"AWEPlayInteractionProgressContainerView");
+    if (cls && !DYFSInstalledProgressContainer) {
+        DYFSInstalledProgressContainer = DYFSInstallHook(cls, @selector(layoutSubviews),
+                    (IMP)DYFSProgressContainerLayout, &DYFSOriginalProgressLayout);
+    }
+
+    Class uiViewClass = UIView.class;
+    if (uiViewClass && !DYFSInstalledPlayerFrame) {
+        DYFSInstalledPlayerFrame = DYFSInstallHook(uiViewClass, @selector(setFrame:),
+                    (IMP)DYFSUIViewSetFrame, &DYFSOriginalUIViewSetFrame);
+    }
+
+    NSString *summary = [NSString stringWithFormat:@"layout hooks %lu/2; sidebar hooks %lu/2; tab bar hooks %lu/2; player frame hook %@",
+                         (unsigned long)DYFSLayoutHookCount(), (unsigned long)DYFSSidebarHookCount(),
+                         (unsigned long)DYFSTabBarHookCount(), DYFSInstalledPlayerFrame ? @"on" : @"off"];
     if (![summary isEqualToString:DYFSLastInstallSummary]) {
         DYFSLastInstallSummary = [summary copy];
         DYFSLog(summary);
@@ -462,7 +640,10 @@ static void DYFSScheduleHooks(void) {
 
         BOOL layoutsInstalled = DYFSInstalledFeed && DYFSInstalledStory;
         BOOL sidebarInstalled = DYFSInstalledSidebarIcon || DYFSInstalledSidebarRight;
-        if ((!layoutsInstalled || !sidebarInstalled) && DYFSInstallAttempts < 60) {
+        BOOL tabBarInstalled = DYFSInstalledTabBarLayout && DYFSInstalledTabBarHidden;
+        BOOL playerFrameInstalled = DYFSInstalledPlayerFrame;
+        if ((!layoutsInstalled || !sidebarInstalled || !tabBarInstalled || !playerFrameInstalled) &&
+            DYFSInstallAttempts < 60) {
             DYFSScheduleHooks();
         }
     });
