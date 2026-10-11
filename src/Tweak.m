@@ -116,7 +116,7 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播预览原位保护：%@\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n设置项名称为“胖胖专属 / 插件开关”。普通视频与图集全屏独立调整；直播预览不做尺寸/位移修改，避免视频、文案与“点击进入直播间”错位。评论输入栏透明处理次数：%lu。",
+        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播预览原位保护：%@\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n设置项名称为“胖胖专属 / 插件开关”。普通视频与图集全屏独立调整；直播预览不做尺寸/位移修改，避免视频、文案与“点击进入直播间”错位。评论页面底部输入栏背景透明处理次数：%lu。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
         DYFSInstalledInteractionController ? @"已安装" : @"未找到类",
@@ -887,46 +887,48 @@ static void DYFSPlayerProgressLayout(id self, SEL cmd) {
 static UIView *DYFSFindCommentInputBar(UIView *root) {
     if (!root) return nil;
 
-    UIView *placeholderOwner = nil;
+    // Locate the bottom input dock by geometry, not by the placeholder text.
+    // Douyin can change the wording or use a different label while the dock
+    // remains in the same bottom-anchored position.
+    CGFloat rootWidth = CGRectGetWidth(root.bounds);
+    CGFloat rootHeight = CGRectGetHeight(root.bounds);
+    if (!isfinite(rootWidth) || !isfinite(rootHeight) ||
+        rootWidth <= 1.0 || rootHeight <= 1.0) return nil;
+
+    UIView *bestCandidate = nil;
+    CGFloat bestScore = -CGFLOAT_MAX;
     NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
+
     while (pending.count > 0) {
         UIView *current = pending.lastObject;
         [pending removeLastObject];
-
-        NSString *text = current.accessibilityLabel ?: @"";
-        if ([current isKindOfClass:UILabel.class]) {
-            text = ((UILabel *)current).text ?: text;
-        } else if ([current isKindOfClass:UITextField.class]) {
-            UITextField *field = (UITextField *)current;
-            text = field.placeholder ?: field.text ?: text;
-        } else if ([current isKindOfClass:UITextView.class]) {
-            text = ((UITextView *)current).text ?: text;
-        } else if ([current isKindOfClass:UIButton.class]) {
-            text = [((UIButton *)current) titleForState:UIControlStateNormal] ?: text;
-        }
-
-        if ([text containsString:@"爱评论的人运气不会差"]) {
-            placeholderOwner = current;
-            break;
-        }
         [pending addObjectsFromArray:current.subviews];
-    }
-    if (!placeholderOwner) return nil;
 
-    CGFloat rootWidth = CGRectGetWidth(root.bounds);
-    CGFloat rootHeight = CGRectGetHeight(root.bounds);
-    UIView *candidate = nil;
-    for (UIView *cursor = placeholderOwner; cursor && cursor != root; cursor = cursor.superview) {
-        CGRect rect = [cursor convertRect:cursor.bounds toView:root];
+        if (current == root || current.hidden || current.alpha <= 0.01) continue;
+        CGRect rect = [current convertRect:current.bounds toView:root];
         CGFloat width = CGRectGetWidth(rect);
         CGFloat height = CGRectGetHeight(rect);
-        if (rootWidth > 0.0 && width >= rootWidth * 0.78 &&
-            height >= 42.0 && height <= 120.0 &&
-            CGRectGetMaxY(rect) >= rootHeight - 180.0) {
-            candidate = cursor;
+        CGFloat bottomGap = rootHeight - CGRectGetMaxY(rect);
+        CGFloat topGap = rootHeight - CGRectGetMinY(rect);
+
+        // The comment input dock is a wide, shallow view anchored near the
+        // bottom edge. Avoid matching the full-screen comment list or labels.
+        if (width < rootWidth * 0.78 ||
+            height < 42.0 || height > 150.0 ||
+            bottomGap < -3.0 || bottomGap > 180.0 ||
+            topGap > 260.0) continue;
+
+        CGFloat widthRatio = width / rootWidth;
+        CGFloat heightPenalty = fabs(height - 68.0) / 100.0;
+        CGFloat bottomPenalty = fabs(bottomGap) / 180.0;
+        CGFloat score = widthRatio * 3.0 - heightPenalty - bottomPenalty;
+        if (score > bestScore) {
+            bestScore = score;
+            bestCandidate = current;
         }
     }
-    return candidate;
+
+    return bestCandidate;
 }
 
 static void DYFSClearCommentInputBackgrounds(UIView *view, NSUInteger depth) {
