@@ -705,6 +705,19 @@ static void DYFSMixPanelDetailLayout(id self, SEL cmd) {
     DYFSApplyRecommendationTransparencyInView(root);
 }
 
+static BOOL DYFSIsDetailVideoContext(UIView *view) {
+    UIViewController *controller = DYFSFindViewController(view);
+    for (NSUInteger depth = 0; controller && depth < 20; depth++, controller = controller.parentViewController) {
+        NSString *name = NSStringFromClass(controller.class);
+        if ([name containsString:@"AWEAwemeDetailTableViewController"] ||
+            [name containsString:@"AWEAwemeDetailCellViewController"] ||
+            [name containsString:@"AWEMixVideoPanelDetailTableViewController"]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static BOOL DYFSIsFeedCellInteractionController(UIViewController *controller) {
     if (!controller) return NO;
 
@@ -767,7 +780,8 @@ static void DYFSApplyPlayerContentHeightNow(id playerController) {
 
     UIView *contentView = DYFSSafeValueForKey(playerController, @"contentView");
     if (DYFSIsLivePreStreamContext(contentView)) return;
-    if (DYFSInProfileContext(controllerView) || DYFSInProfileContext(contentView)) {
+    if (DYFSInProfileContext(controllerView) || DYFSInProfileContext(contentView) ||
+        DYFSIsDetailVideoContext(controllerView) || DYFSIsDetailVideoContext(contentView)) {
         DYFSApplyVideoDetailBottomTransparencyInView(controllerView);
         return;
     }
@@ -809,8 +823,9 @@ static void DYFSSchedulePlayerContentHeight(id playerController) {
     UIViewController *controllerViewController = [playerController isKindOfClass:UIViewController.class]
         ? (UIViewController *)playerController : nil;
     UIView *controllerView = controllerViewController.view;
-    if (DYFSInProfileContext(controllerView)) {
+    if (DYFSInProfileContext(controllerView) || DYFSIsDetailVideoContext(controllerView)) {
         DYFSApplyVideoDetailBottomTransparencyInView(controllerView);
+        if (controllerView.superview) DYFSApplyVideoDetailBottomTransparencyInView(controllerView.superview);
         return;
     }
 
@@ -871,7 +886,10 @@ static void DYFSPlayerContentLayoutA(id self, SEL cmd) {
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
     DYFSApplyRecommendationTransparencyInView(root);
     if (root.superview) DYFSApplyRecommendationTransparencyInView(root.superview);
-    if (DYFSInProfileContext(root)) DYFSApplyVideoDetailBottomTransparencyInView(root);
+    if (DYFSInProfileContext(root) || DYFSIsDetailVideoContext(root)) {
+        DYFSApplyVideoDetailBottomTransparencyInView(root);
+        if (root.superview) DYFSApplyVideoDetailBottomTransparencyInView(root.superview);
+    }
     DYFSSchedulePlayerContentHeight(self);
 }
 static void DYFSPlayerContentLayoutB(id self, SEL cmd) {
@@ -879,7 +897,10 @@ static void DYFSPlayerContentLayoutB(id self, SEL cmd) {
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
     DYFSApplyRecommendationTransparencyInView(root);
     if (root.superview) DYFSApplyRecommendationTransparencyInView(root.superview);
-    if (DYFSInProfileContext(root)) DYFSApplyVideoDetailBottomTransparencyInView(root);
+    if (DYFSInProfileContext(root) || DYFSIsDetailVideoContext(root)) {
+        DYFSApplyVideoDetailBottomTransparencyInView(root);
+        if (root.superview) DYFSApplyVideoDetailBottomTransparencyInView(root.superview);
+    }
     DYFSSchedulePlayerContentHeight(self);
 }
 static void DYFSPlayerContentLayoutC(id self, SEL cmd) {
@@ -887,7 +908,10 @@ static void DYFSPlayerContentLayoutC(id self, SEL cmd) {
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
     DYFSApplyRecommendationTransparencyInView(root);
     if (root.superview) DYFSApplyRecommendationTransparencyInView(root.superview);
-    if (DYFSInProfileContext(root)) DYFSApplyVideoDetailBottomTransparencyInView(root);
+    if (DYFSInProfileContext(root) || DYFSIsDetailVideoContext(root)) {
+        DYFSApplyVideoDetailBottomTransparencyInView(root);
+        if (root.superview) DYFSApplyVideoDetailBottomTransparencyInView(root.superview);
+    }
     DYFSSchedulePlayerContentHeight(self);
 }
 
