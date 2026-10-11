@@ -25,6 +25,12 @@ static void DYFSLog(NSString *message) {
     NSLog(@"[DY.FullScreen] %@", message);
 }
 
+static BOOL DYFSIsEnabled(void) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:DYFSEnabledKey] == nil) return YES;
+    return [defaults boolForKey:DYFSEnabledKey];
+}
+
 static BOOL DYFSInProfileContext(UIView *view) {
     UIResponder *item = view;
     for (NSUInteger depth = 0; item && depth < 20; depth++) {
@@ -297,6 +303,21 @@ static void DYFSInstallSettingsEntry(UIView *settingsIcon) {
     DYFSLog(@"installed DY.FullScreen button next to Douyin Settings");
 }
 
+static void DYFSScanForSettingsEntry(UIView *root, NSUInteger depth) {
+    if (!root || depth > 18 || DYFSSettingsEntryVisible) return;
+    NSString *className = NSStringFromClass(root.class);
+    if (([className isEqualToString:@"AWELeftSideBarTopIconHorizontalView"] ||
+         [className isEqualToString:@"AWELeftSideBarTopRightLayoutView"]) &&
+        [root.accessibilityLabel isEqualToString:@"设置"]) {
+        DYFSInstallSettingsEntry(root);
+        if (DYFSSettingsEntryVisible) return;
+    }
+    for (UIView *subview in [root.subviews copy]) {
+        DYFSScanForSettingsEntry(subview, depth + 1);
+        if (DYFSSettingsEntryVisible) return;
+    }
+}
+
 
 static void DYFSFeedTableLayout(id self, SEL cmd) {
     if (DYFSOriginalFeedLayout) ((void (*)(id, SEL))DYFSOriginalFeedLayout)(self, cmd);
@@ -413,6 +434,14 @@ static void DYFSInstallHooks(void) {
                     (IMP)DYFSLeftSidebarRightDidMove, &DYFSOriginalSidebarRightMove);
     }
 
+
+    if (!DYFSSettingsEntryVisible) {
+        for (UIWindow *window in UIApplication.sharedApplication.windows) {
+            DYFSScanForSettingsEntry(window, 0);
+            if (DYFSSettingsEntryVisible) break;
+        }
+    }
+
     NSString *summary = [NSString stringWithFormat:@"layout hooks %lu/2; sidebar hooks %lu/2",
                          (unsigned long)DYFSLayoutHookCount(), (unsigned long)DYFSSidebarHookCount()];
     if (![summary isEqualToString:DYFSLastInstallSummary]) {
@@ -441,7 +470,12 @@ static void DYFSScheduleHooks(void) {
 __attribute__((constructor)) static void DYFSConstructor(void) {
     @autoreleasepool {
         if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:DYFSBundleID]) return;
+
         DYFSLog(@"loaded into Douyin");
+        NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"unknown";
+        if (![version hasPrefix:DYFSTestedVersion]) {
+            DYFSLog([NSString stringWithFormat:@"tested for %@; current app version is %@", DYFSTestedVersion, version]);
+        }
         if ([NSUserDefaults.standardUserDefaults objectForKey:DYFSEnabledKey] == nil) {
             [NSUserDefaults.standardUserDefaults setBool:YES forKey:DYFSEnabledKey];
         }
