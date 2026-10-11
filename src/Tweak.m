@@ -20,6 +20,7 @@ static BOOL DYFSInstalledTabBarLayout = NO;
 static BOOL DYFSInstalledTabBarHidden = NO;
 static BOOL DYFSInstalledInteractionProgress = NO;
 static BOOL DYFSInstalledPlayerProgress = NO;
+static BOOL DYFSInstalledCommentPanel = NO;
 static BOOL DYFSInstalledNativeSettingsSwitch = NO;
 static BOOL DYFSNativeSettingsRowAdded = NO;
 static NSUInteger DYFSInstallAttempts = 0;
@@ -28,6 +29,7 @@ static NSUInteger DYFSLayoutFixCount = 0;
 static NSUInteger DYFSInteractionContainerAdjustCount = 0;
 static NSUInteger DYFSPlayerContentAdjustCount = 0;
 static NSUInteger DYFSTabBarApplyCount = 0;
+static NSUInteger DYFSCommentBarTransparencyApplyCount = 0;
 static BOOL DYFSLastHomeTabSelected = NO;
 static BOOL DYFSLastTabBackgroundHidden = NO;
 static BOOL DYFSSettingsEntryVisible = NO;
@@ -45,6 +47,7 @@ static IMP DYFSOriginalTabBarLayout = NULL;
 static IMP DYFSOriginalTabBarHidden = NULL;
 static IMP DYFSOriginalInteractionProgressLayout = NULL;
 static IMP DYFSOriginalPlayerProgressLayout = NULL;
+static IMP DYFSOriginalCommentPanelLayout = NULL;
 static IMP DYFSOriginalNativeSettingsDidAppear = NULL;
 
 static void DYFSLog(NSString *message) {
@@ -113,7 +116,7 @@ static void DYFSRequestRelayout(void) {
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播预览原位保护：%@\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n开关名称仅为“首页全屏”。全屏尺寸调整仅用于首页普通视频和图集；直播推流/预览界面保持原生画面、文案与进入直播间控件位置；不逐项移动点赞/评论/分享按钮。",
+        @"抖音版本：%@\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n直播预览原位保护：%@\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n设置项名称为“胖胖专属 / 插件开关”。普通视频与图集全屏独立调整；直播预览不做尺寸/位移修改，避免视频、文案与“点击进入直播间”错位。评论输入栏透明处理次数：%lu。",
         version, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
         DYFSInstalledInteractionController ? @"已安装" : @"未找到类",
@@ -128,7 +131,8 @@ static NSString *DYFSStatusText(void) {
         DYFSLastHomeTabSelected ? @"是" : @"否",
         DYFSLastTabBackgroundHidden ? @"是" : @"否",
         (unsigned long)DYFSTabBarApplyCount,
-        (unsigned long)DYFSLayoutFixCount];
+        (unsigned long)DYFSLayoutFixCount,
+        (unsigned long)DYFSCommentBarTransparencyApplyCount];
 }
 
 static UIViewController *DYFSFindViewController(UIView *view) {
@@ -171,6 +175,30 @@ static BOOL DYFSIsLivePreStreamContext(UIView *view) {
             return YES;
         }
     }
+    return NO;
+}
+
+static BOOL DYFSIsLivePreStreamPlayer(id playerController) {
+    if (!playerController) return NO;
+
+    NSString *ownName = NSStringFromClass([playerController class]);
+    if ([ownName containsString:@"AWELiveNewPreStreamViewController"] ||
+        [ownName containsString:@"AWELivePreStream"]) {
+        return YES;
+    }
+
+    if ([playerController isKindOfClass:UIViewController.class]) {
+        UIViewController *cursor = (UIViewController *)playerController;
+        for (NSUInteger depth = 0; cursor && depth < 20; depth++, cursor = cursor.parentViewController) {
+            NSString *name = NSStringFromClass(cursor.class);
+            if ([name containsString:@"AWELiveNewPreStreamViewController"] ||
+                [name containsString:@"AWELivePreStream"]) {
+                return YES;
+            }
+        }
+        return DYFSIsLivePreStreamContext(((UIViewController *)playerController).view);
+    }
+
     return NO;
 }
 
@@ -229,22 +257,22 @@ static void DYFSOpenSettings(id sender);
 @implementation DYFSSettingsViewController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"DY.FullScreen";
+    self.title = @"胖胖专属";
     self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
 
     UILabel *titleLabel = [[UILabel alloc] init];
-    titleLabel.text = @"首页全屏";
+    titleLabel.text = @"胖胖专属";
     titleLabel.font = [UIFont boldSystemFontOfSize:24];
     titleLabel.textColor = UIColor.labelColor;
 
     UILabel *descriptionLabel = [[UILabel alloc] init];
-    descriptionLabel.text = @"适配目标为抖音 40.7.0。";
+    descriptionLabel.text = @"首页视频与图集全屏、底栏透明设置。适配抖音 40.7.0。";
     descriptionLabel.font = [UIFont systemFontOfSize:14];
     descriptionLabel.textColor = UIColor.secondaryLabelColor;
     descriptionLabel.numberOfLines = 0;
 
     UILabel *switchTitle = [[UILabel alloc] init];
-    switchTitle.text = @"首页全屏";
+    switchTitle.text = @"插件开关";
     switchTitle.font = [UIFont systemFontOfSize:16];
     switchTitle.textColor = UIColor.labelColor;
 
@@ -359,7 +387,7 @@ static void DYFSInstallSettingsEntry(UIView *settingsIcon) {
     // superview that will contain the button; using settingsIcon.frame directly
     // here mixes coordinate systems and can place the entry off-screen.
     CGRect anchorFrame = [settingsIcon convertRect:settingsIcon.bounds toView:targetSuperView];
-    CGFloat buttonWidth = 60.0;
+    CGFloat buttonWidth = 88.0;
     CGFloat buttonHeight = 32.0;
     CGFloat availableWidth = CGRectGetWidth(targetSuperView.bounds);
     CGFloat availableHeight = CGRectGetHeight(targetSuperView.bounds);
@@ -394,9 +422,9 @@ static void DYFSInstallSettingsEntry(UIView *settingsIcon) {
         [targetSuperView addSubview:button];
     }
 
-    [button setTitle:@"全屏" forState:UIControlStateNormal];
+    [button setTitle:@"胖胖专属" forState:UIControlStateNormal];
     [button setTitleColor:UIColor.labelColor forState:UIControlStateNormal];
-    button.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    button.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     button.frame = CGRectMake(x, y, buttonWidth, buttonHeight);
     button.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
 
@@ -489,7 +517,7 @@ static void DYFSInteractionControllerLayout(id self, SEL cmd) {
 
     UIViewController *controller = (UIViewController *)self;
     UIView *view = controller.view;
-    if (!view || !view.superview || DYFSInProfileContext(view) || DYFSIsLivePreStreamContext(view)) return;
+    if (!view || !view.superview || DYFSInProfileContext(view) || DYFSIsLivePreStreamContext(view) || DYFSIsLivePreStreamPlayer(controller)) return;
     if (!DYFSIsFeedCellInteractionController(controller)) return;
 
     UIView *parent = view.superview;
@@ -519,7 +547,7 @@ static void DYFSApplyPlayerContentHeight(id playerController) {
 
     UIView *controllerView = [playerController isKindOfClass:UIViewController.class]
         ? ((UIViewController *)playerController).view : nil;
-    if (DYFSIsLivePreStreamContext(controllerView)) return;
+    if (DYFSIsLivePreStreamPlayer(playerController) || DYFSIsLivePreStreamContext(controllerView)) return;
 
     UIView *contentView = DYFSSafeValueForKey(playerController, @"contentView");
     if (DYFSIsLivePreStreamContext(contentView)) return;
@@ -588,7 +616,7 @@ static void DYFSStoryContainerLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
 
     UIView *container = (UIView *)self;
-    if (DYFSInProfileContext(container)) return;
+    if (DYFSInProfileContext(container) || DYFSIsLivePreStreamContext(container)) return;
 
     id homeValue = DYFSSafeValueForKey(container, @"enableEnterProfile");
     BOOL isHome = [homeValue respondsToSelector:@selector(boolValue)] && [homeValue boolValue];
@@ -652,8 +680,8 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
         for (id item in (NSArray *)rawItems) {
             NSString *identifier = DYFSSafeValueForKey(item, @"identifier");
             if (![identifier isEqualToString:itemIdentifier]) continue;
-            DYFSSafeSetValueForKey(item, @"首页全屏", @"title");
-            DYFSSafeSetValueForKey(item, @"胖胖专用工具", @"subTitle");
+            DYFSSafeSetValueForKey(item, @"胖胖专属", @"title");
+            DYFSSafeSetValueForKey(item, @"插件开关", @"subTitle");
             DYFSSafeSetValueForKey(item, @"", @"detail");
             DYFSSafeSetValueForKey(item, @(DYFSIsEnabled()), @"isSwitchOn");
             DYFSNativeSettingsRowAdded = YES;
@@ -670,8 +698,8 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
 
     id item = [[itemClass alloc] init];
     DYFSSafeSetValueForKey(item, itemIdentifier, @"identifier");
-    DYFSSafeSetValueForKey(item, @"首页全屏", @"title");
-    DYFSSafeSetValueForKey(item, @"胖胖专用工具", @"subTitle");
+    DYFSSafeSetValueForKey(item, @"胖胖专属", @"title");
+    DYFSSafeSetValueForKey(item, @"插件开关", @"subTitle");
     DYFSSafeSetValueForKey(item, @"", @"detail");
     DYFSSafeSetValueForKey(item, @6, @"cellType");
     DYFSSafeSetValueForKey(item, @0, @"colorStyle");
@@ -715,13 +743,25 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
     DYFSLog(@"inserted homepage fullscreen switch in native Douyin Settings");
 }
 
+static void DYFSRetryNativeSettingsSwitch(UIViewController *controller, NSUInteger attemptsLeft) {
+    DYFSEnsureNativeSettingsSwitch(controller);
+    if (DYFSNativeSettingsRowAdded || attemptsLeft == 0) return;
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        DYFSRetryNativeSettingsSwitch(controller, attemptsLeft - 1);
+    });
+}
+
 static void DYFSNativeSettingsDidAppear(id self, SEL cmd, BOOL animated) {
     if (DYFSOriginalNativeSettingsDidAppear) {
         ((void (*)(id, SEL, BOOL))DYFSOriginalNativeSettingsDidAppear)(self, cmd, animated);
     }
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        DYFSEnsureNativeSettingsSwitch((UIViewController *)self);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // Re-check each time Settings opens. Douyin can populate sectionDataArray
+        // after viewDidAppear, so retry briefly instead of waiting for a reopen.
+        DYFSNativeSettingsRowAdded = NO;
+        DYFSRetryNativeSettingsSwitch((UIViewController *)self, 8);
     });
 }
 
@@ -744,15 +784,14 @@ static void DYFSApplyTabBarTransparency(UIView *tabBar) {
         }
     }
 
-    // DYYY hides the skin layer while full-screen is active, and hides the
-    // actual bar background only while the Home tab is selected. Buttons stay
-    // visible/tappable; only background layers and the hairline are hidden.
+    // Hide only the tab bar's background layers on every tab. Buttons remain
+    // visible/tappable; the selected tab does not change transparency behavior.
     id skinContainer = DYFSSafeValueForKey(tabBar, @"skinContainerView");
     if ([skinContainer isKindOfClass:UIView.class]) {
         ((UIView *)skinContainer).hidden = enabled;
     }
 
-    BOOL shouldHideBackgrounds = enabled && isHomeSelected;
+    BOOL shouldHideBackgrounds = enabled;
     CGFloat barHeight = CGRectGetHeight(tabBar.bounds);
     if (barHeight <= 0.0 || !isfinite(barHeight)) {
         barHeight = 49.0 + MAX(0.0, tabBar.window.safeAreaInsets.bottom);
@@ -829,6 +868,116 @@ static void DYFSPlayerProgressLayout(id self, SEL cmd) {
             subview.backgroundColor = UIColor.clearColor;
         }
     }
+}
+
+static BOOL DYFSViewContainsCommentPlaceholder(UIView *view, NSUInteger depth) {
+    if (!view || depth > 12) return NO;
+
+    NSString *text = view.accessibilityLabel ?: @"";
+    if ([view isKindOfClass:UILabel.class]) {
+        text = ((UILabel *)view).text ?: text;
+    } else if ([view isKindOfClass:UITextField.class]) {
+        UITextField *field = (UITextField *)view;
+        text = field.placeholder ?: field.text ?: text;
+    } else if ([view isKindOfClass:UITextView.class]) {
+        text = ((UITextView *)view).text ?: text;
+    } else if ([view isKindOfClass:UIButton.class]) {
+        text = [((UIButton *)view) titleForState:UIControlStateNormal] ?: text;
+    }
+
+    if ([text containsString:@"爱评论的人运气不会差"]) return YES;
+    for (UIView *subview in [view.subviews copy]) {
+        if (DYFSViewContainsCommentPlaceholder(subview, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+static UIView *DYFSFindCommentInputBar(UIView *root) {
+    if (!root) return nil;
+
+    UIView *placeholderOwner = nil;
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
+    while (pending.count > 0) {
+        UIView *current = pending.lastObject;
+        [pending removeLastObject];
+
+        NSString *text = current.accessibilityLabel ?: @"";
+        if ([current isKindOfClass:UILabel.class]) {
+            text = ((UILabel *)current).text ?: text;
+        } else if ([current isKindOfClass:UITextField.class]) {
+            UITextField *field = (UITextField *)current;
+            text = field.placeholder ?: field.text ?: text;
+        } else if ([current isKindOfClass:UITextView.class]) {
+            text = ((UITextView *)current).text ?: text;
+        } else if ([current isKindOfClass:UIButton.class]) {
+            text = [((UIButton *)current) titleForState:UIControlStateNormal] ?: text;
+        }
+
+        if ([text containsString:@"爱评论的人运气不会差"]) {
+            placeholderOwner = current;
+            break;
+        }
+        [pending addObjectsFromArray:current.subviews];
+    }
+    if (!placeholderOwner) return nil;
+
+    CGFloat rootWidth = CGRectGetWidth(root.bounds);
+    CGFloat rootHeight = CGRectGetHeight(root.bounds);
+    UIView *candidate = nil;
+    for (UIView *cursor = placeholderOwner; cursor && cursor != root; cursor = cursor.superview) {
+        CGRect rect = [cursor convertRect:cursor.bounds toView:root];
+        CGFloat width = CGRectGetWidth(rect);
+        CGFloat height = CGRectGetHeight(rect);
+        if (rootWidth > 0.0 && width >= rootWidth * 0.78 &&
+            height >= 42.0 && height <= 120.0 &&
+            CGRectGetMaxY(rect) >= rootHeight - 180.0) {
+            candidate = cursor;
+        }
+    }
+    return candidate;
+}
+
+static void DYFSClearCommentInputBackgrounds(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return;
+    view.backgroundColor = UIColor.clearColor;
+
+    for (UIView *subview in [view.subviews copy]) {
+        NSString *name = NSStringFromClass(subview.class);
+        CGRect rect = [subview convertRect:subview.bounds toView:view];
+        BOOL coversBar = CGRectGetWidth(view.bounds) > 0.0 &&
+            CGRectGetWidth(rect) >= CGRectGetWidth(view.bounds) * 0.90 &&
+            CGRectGetHeight(view.bounds) > 0.0 &&
+            CGRectGetHeight(rect) >= CGRectGetHeight(view.bounds) * 0.75;
+
+        if (coversBar && ([subview isKindOfClass:UIVisualEffectView.class] ||
+                          [name containsString:@"Background"] ||
+                          [name containsString:@"Blur"])) {
+            subview.hidden = YES;
+            continue;
+        }
+
+        if ([subview isMemberOfClass:UIView.class] ||
+            [name containsString:@"Background"] ||
+            [name containsString:@"Blur"]) {
+            subview.backgroundColor = UIColor.clearColor;
+        }
+        DYFSClearCommentInputBackgrounds(subview, depth + 1);
+    }
+}
+
+static void DYFSCommentPanelLayout(id self, SEL cmd) {
+    if (DYFSOriginalCommentPanelLayout) {
+        ((void (*)(id, SEL))DYFSOriginalCommentPanelLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+
+    UIViewController *controller = (UIViewController *)self;
+    UIView *root = controller.view;
+    UIView *bar = DYFSFindCommentInputBar(root);
+    if (!bar) return;
+
+    DYFSClearCommentInputBackgrounds(bar, 0);
+    DYFSCommentBarTransparencyApplyCount++;
 }
 
 static void DYFSFeedTableLayout(id self, SEL cmd) {
@@ -943,6 +1092,12 @@ static void DYFSInstallHooks(void) {
     if (cls && !DYFSInstalledPlayerProgress) {
         DYFSInstalledPlayerProgress = DYFSInstallHook(cls, @selector(layoutSubviews),
                     (IMP)DYFSPlayerProgressLayout, &DYFSOriginalPlayerProgressLayout);
+    }
+
+    cls = NSClassFromString(@"AWECommentPanelContainerSwiftImpl.CommentContainerInnerViewController");
+    if (cls && !DYFSInstalledCommentPanel) {
+        DYFSInstalledCommentPanel = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+                    (IMP)DYFSCommentPanelLayout, &DYFSOriginalCommentPanelLayout);
     }
 
     cls = NSClassFromString(@"AWENormalModeTabBar");
