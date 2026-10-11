@@ -6,6 +6,7 @@
 
 static NSString * const DYFSBundleID = @"com.ss.iphone.ugc.Aweme";
 static NSString * const DYFSTestedVersion = @"40.7.0";
+static NSString * const DYFSEnabledKey = @"com.dy.fullscreen.enabled";
 static BOOL DYFSInstalledFeed = NO;
 static BOOL DYFSInstalledStory = NO;
 static BOOL DYFSInstalledSidebarIcon = NO;
