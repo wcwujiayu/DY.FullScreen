@@ -18,6 +18,12 @@ static BOOL DYFSInstalledSidebarIcon = NO;
 static BOOL DYFSInstalledSidebarRight = NO;
 static BOOL DYFSInstalledTabBarLayout = NO;
 static BOOL DYFSInstalledTabBarHidden = NO;
+static BOOL DYFSInstalledTabBarDidMove = NO;
+static BOOL DYFSInstalledTabBarDidAddSubview = NO;
+static BOOL DYFSInstalledDetailTable = NO;
+static BOOL DYFSInstalledDetailCell = NO;
+static BOOL DYFSInstalledMixPanelDetail = NO;
+static BOOL DYFSStartupRelayoutScheduled = NO;
 static BOOL DYFSInstalledInteractionProgress = NO;
 static BOOL DYFSInstalledPlayerProgress = NO;
 static BOOL DYFSInstalledCommentPanel = NO;
@@ -45,9 +51,17 @@ static IMP DYFSOriginalSidebarIconMove = NULL;
 static IMP DYFSOriginalSidebarRightMove = NULL;
 static IMP DYFSOriginalTabBarLayout = NULL;
 static IMP DYFSOriginalTabBarHidden = NULL;
+static IMP DYFSOriginalTabBarDidMove = NULL;
+static IMP DYFSOriginalTabBarDidAddSubview = NULL;
+static IMP DYFSOriginalDetailTableLayout = NULL;
+static IMP DYFSOriginalDetailCellLayout = NULL;
+static IMP DYFSOriginalMixPanelDetailLayout = NULL;
 static IMP DYFSOriginalInteractionProgressLayout = NULL;
 static IMP DYFSOriginalPlayerProgressLayout = NULL;
 static IMP DYFSOriginalCommentPanelLayout = NULL;
+static char kDYFSPlayerLayoutPendingKey;
+static char kDYFSPlayerParentHeightKey;
+static char kDYFSPlayerSettledGeometryKey;
 static IMP DYFSOriginalNativeSettingsDidAppear = NULL;
 
 static void DYFSLog(NSString *message) {
@@ -102,13 +116,19 @@ static NSUInteger DYFSTabBarHookCount(void) {
     return (DYFSInstalledTabBarLayout ? 1 : 0) + (DYFSInstalledTabBarHidden ? 1 : 0);
 }
 
+static void DYFSMarkNeedsLayoutRecursively(UIView *view, NSUInteger depth) {
+    if (!view || depth > 32) return;
+    [view setNeedsLayout];
+    for (UIView *subview in [view.subviews copy]) {
+        DYFSMarkNeedsLayoutRecursively(subview, depth + 1);
+    }
+}
+
 static void DYFSRequestRelayout(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         for (UIWindow *window in UIApplication.sharedApplication.windows) {
-            [window setNeedsLayout];
-            for (UIView *subview in [window.subviews copy]) {
-                [subview setNeedsLayout];
-            }
+            DYFSMarkNeedsLayoutRecursively(window, 0);
+            [window layoutIfNeeded];
         }
     });
 }
@@ -504,6 +524,187 @@ static CGFloat DYFSBottomTabBarHeight(UIView *view) {
     return 49.0;
 }
 
+static NSString *DYFSVisibleTextForView(UIView *view) {
+    if (!view) return @"";
+    if ([view isKindOfClass:UILabel.class]) {
+        UILabel *label = (UILabel *)view;
+        return label.attributedText.string ?: label.text ?: label.accessibilityLabel ?: @"";
+    }
+    if ([view isKindOfClass:UITextField.class]) {
+        UITextField *field = (UITextField *)view;
+        return field.placeholder ?: field.text ?: field.accessibilityLabel ?: @"";
+    }
+    if ([view isKindOfClass:UITextView.class]) {
+        UITextView *textView = (UITextView *)view;
+        return textView.text ?: textView.accessibilityLabel ?: @"";
+    }
+    if ([view isKindOfClass:UIButton.class]) {
+        UIButton *button = (UIButton *)view;
+        return [button titleForState:UIControlStateNormal] ?: button.accessibilityLabel ?: @"";
+    }
+    return view.accessibilityLabel ?: @"";
+}
+
+static BOOL DYFSIsRecommendationBoxLabel(UIView *view) {
+    NSString *text = DYFSVisibleTextForView(view);
+    return [text containsString:@"相关搜索"] || [text containsString:@"合集"];
+}
+
+static BOOL DYFSViewContainsControl(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+    NSString *name = NSStringFromClass(view.class);
+    if ([view isKindOfClass:UIControl.class] ||
+        [name containsString:@"GeneralButton"] ||
+        [name containsString:@"PlusButton"] ||
+        [name containsString:@"Button"]) {
+        return YES;
+    }
+    for (UIView *subview in view.subviews) {
+        if (DYFSViewContainsControl(subview, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+static BOOL DYFSIsBackgroundChrome(UIView *view) {
+    if (!view) return NO;
+    NSString *name = NSStringFromClass(view.class);
+    return [view isKindOfClass:UIVisualEffectView.class] ||
+           [name containsString:@"Background"] ||
+           [name containsString:@"Backdrop"] ||
+           [name containsString:@"Blur"] ||
+           [name isEqualToString:@"_UIBarBackground"];
+}
+
+static void DYFSClearSmallCardChrome(UIView *card, NSUInteger depth) {
+    if (!card || depth > 8) return;
+    card.backgroundColor = UIColor.clearColor;
+    card.layer.backgroundColor = UIColor.clearColor.CGColor;
+
+    CGFloat cardWidth = CGRectGetWidth(card.bounds);
+    CGFloat cardHeight = CGRectGetHeight(card.bounds);
+    for (UIView *subview in [card.subviews copy]) {
+        if (DYFSIsBackgroundChrome(subview)) {
+            subview.hidden = YES;
+            continue;
+        }
+
+        CGRect rect = [subview convertRect:subview.bounds toView:card];
+        BOOL fillsCard = cardWidth > 0.0 && cardHeight > 0.0 &&
+            CGRectGetWidth(rect) >= cardWidth * 0.82 &&
+            CGRectGetHeight(rect) >= cardHeight * 0.68;
+        if ([subview isMemberOfClass:UIView.class] &&
+            fillsCard && !DYFSViewContainsControl(subview, 0)) {
+            subview.hidden = YES;
+            continue;
+        }
+
+        NSString *name = NSStringFromClass(subview.class);
+        if ([name containsString:@"Background"] || [name containsString:@"Blur"] ||
+            [name containsString:@"Backdrop"]) {
+            subview.backgroundColor = UIColor.clearColor;
+            subview.layer.backgroundColor = UIColor.clearColor.CGColor;
+        }
+        DYFSClearSmallCardChrome(subview, depth + 1);
+    }
+}
+
+static void DYFSApplyRecommendationTransparencyInView(UIView *root) {
+    if (!root || !DYFSIsEnabled()) return;
+    CGFloat rootWidth = CGRectGetWidth(root.bounds);
+    CGFloat rootHeight = CGRectGetHeight(root.bounds);
+    if (rootWidth < 100.0 || rootHeight < 160.0) return;
+
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
+    while (pending.count > 0) {
+        UIView *view = pending.lastObject;
+        [pending removeLastObject];
+        [pending addObjectsFromArray:view.subviews];
+
+        if (!DYFSIsRecommendationBoxLabel(view)) continue;
+        for (UIView *candidate = view.superview; candidate && candidate != root; candidate = candidate.superview) {
+            CGRect rect = [candidate convertRect:candidate.bounds toView:root];
+            CGFloat width = CGRectGetWidth(rect);
+            CGFloat height = CGRectGetHeight(rect);
+            CGFloat minY = CGRectGetMinY(rect);
+            if (width >= MAX(84.0, rootWidth * 0.20) &&
+                width <= rootWidth * 0.98 &&
+                height >= 28.0 && height <= 138.0 &&
+                minY >= rootHeight * 0.35 &&
+                CGRectGetMaxY(rect) <= rootHeight + 3.0) {
+                DYFSClearSmallCardChrome(candidate, 0);
+                break;
+            }
+        }
+    }
+}
+
+// Profile/detail videos get background transparency only; their player frame is
+// left to Douyin so a late profile layout cannot shift the video vertically.
+static void DYFSApplyVideoDetailBottomTransparencyInView(UIView *root) {
+    if (!root || !DYFSIsEnabled()) return;
+    CGFloat rootWidth = CGRectGetWidth(root.bounds);
+    CGFloat rootHeight = CGRectGetHeight(root.bounds);
+    if (rootWidth < 100.0 || rootHeight < 160.0) return;
+
+    UIView *bestCandidate = nil;
+    CGFloat bestScore = -CGFLOAT_MAX;
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
+    while (pending.count > 0) {
+        UIView *view = pending.lastObject;
+        [pending removeLastObject];
+        [pending addObjectsFromArray:view.subviews];
+        if (view == root || view.hidden || view.alpha <= 0.01) continue;
+
+        CGRect rect = [view convertRect:view.bounds toView:root];
+        CGFloat width = CGRectGetWidth(rect);
+        CGFloat height = CGRectGetHeight(rect);
+        CGFloat bottomGap = rootHeight - CGRectGetMaxY(rect);
+        CGFloat topY = CGRectGetMinY(rect);
+        if (width < rootWidth * 0.76 || height < 34.0 || height > 128.0 ||
+            topY < rootHeight * 0.58 || bottomGap < -3.0 || bottomGap > 175.0) continue;
+
+        CGFloat score = (width / rootWidth) * 4.0 -
+                        (fabs(height - 62.0) / 100.0) -
+                        (fabs(bottomGap - 30.0) / 180.0);
+        if (score > bestScore) {
+            bestCandidate = view;
+            bestScore = score;
+        }
+    }
+
+    if (bestCandidate) DYFSClearSmallCardChrome(bestCandidate, 0);
+}
+
+static void DYFSDetailTableLayout(id self, SEL cmd) {
+    if (DYFSOriginalDetailTableLayout) {
+        ((void (*)(id, SEL))DYFSOriginalDetailTableLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+    UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
+    DYFSApplyVideoDetailBottomTransparencyInView(root);
+    DYFSApplyRecommendationTransparencyInView(root);
+}
+
+static void DYFSDetailCellLayout(id self, SEL cmd) {
+    if (DYFSOriginalDetailCellLayout) {
+        ((void (*)(id, SEL))DYFSOriginalDetailCellLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+    UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
+    DYFSApplyVideoDetailBottomTransparencyInView(root);
+    DYFSApplyRecommendationTransparencyInView(root);
+}
+
+static void DYFSMixPanelDetailLayout(id self, SEL cmd) {
+    if (DYFSOriginalMixPanelDetailLayout) {
+        ((void (*)(id, SEL))DYFSOriginalMixPanelDetailLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+    UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
+    DYFSApplyVideoDetailBottomTransparencyInView(root);
+    DYFSApplyRecommendationTransparencyInView(root);
+}
+
 static BOOL DYFSIsFeedCellInteractionController(UIViewController *controller) {
     if (!controller) return NO;
 
@@ -527,10 +728,11 @@ static void DYFSInteractionControllerLayout(id self, SEL cmd) {
     if (DYFSOriginalInteractionControllerLayout) {
         ((void (*)(id, SEL))DYFSOriginalInteractionControllerLayout)(self, cmd);
     }
-    if (!DYFSIsEnabled()) return;
-
     UIViewController *controller = (UIViewController *)self;
     UIView *view = controller.view;
+    if (!DYFSIsEnabled()) return;
+    DYFSApplyRecommendationTransparencyInView(view);
+    if (view.superview) DYFSApplyRecommendationTransparencyInView(view.superview);
     if (!view || !view.superview || DYFSInProfileContext(view) || DYFSIsLivePreStreamContext(view) || DYFSIsLivePreStreamPlayer(controller)) return;
     if (!DYFSIsFeedCellInteractionController(controller)) return;
 
@@ -556,7 +758,7 @@ static void DYFSInteractionControllerLayout(id self, SEL cmd) {
         oldHeight, targetHeight, parentHeight, tabBarHeight]);
 }
 
-static void DYFSApplyPlayerContentHeight(id playerController) {
+static void DYFSApplyPlayerContentHeightNow(id playerController) {
     if (!DYFSIsEnabled()) return;
 
     UIView *controllerView = [playerController isKindOfClass:UIViewController.class]
@@ -565,7 +767,12 @@ static void DYFSApplyPlayerContentHeight(id playerController) {
 
     UIView *contentView = DYFSSafeValueForKey(playerController, @"contentView");
     if (DYFSIsLivePreStreamContext(contentView)) return;
-    if (![contentView isKindOfClass:UIView.class] || !contentView.superview) return;
+    if (DYFSInProfileContext(controllerView) || DYFSInProfileContext(contentView)) {
+        DYFSApplyVideoDetailBottomTransparencyInView(controllerView);
+        return;
+    }
+    if (![contentView isKindOfClass:UIView.class] || !contentView.superview ||
+        !contentView.window || !contentView.superview.window) return;
 
     UIView *parent = contentView.superview;
     CGFloat parentHeight = CGRectGetHeight(parent.bounds);
@@ -597,17 +804,91 @@ static void DYFSApplyPlayerContentHeight(id playerController) {
         NSStringFromClass([playerController class]), currentHeight, targetHeight, parentHeight, diff, tabBarHeight]);
 }
 
+static void DYFSSchedulePlayerContentHeight(id playerController) {
+    if (!playerController || !DYFSIsEnabled()) return;
+    UIViewController *controllerViewController = [playerController isKindOfClass:UIViewController.class]
+        ? (UIViewController *)playerController : nil;
+    UIView *controllerView = controllerViewController.view;
+    if (DYFSInProfileContext(controllerView)) {
+        DYFSApplyVideoDetailBottomTransparencyInView(controllerView);
+        return;
+    }
+
+    UIView *currentContent = DYFSSafeValueForKey(playerController, @"contentView");
+    UIView *currentParent = [currentContent isKindOfClass:UIView.class] ? currentContent.superview : nil;
+    if ([currentContent isKindOfClass:UIView.class] && currentParent && currentContent.window && currentParent.window) {
+        NSArray *settled = objc_getAssociatedObject(playerController, &kDYFSPlayerSettledGeometryKey);
+        if ([settled isKindOfClass:NSArray.class] && settled.count == 3) {
+            CGFloat parentWidth = CGRectGetWidth(currentParent.bounds);
+            CGFloat parentHeight = CGRectGetHeight(currentParent.bounds);
+            CGFloat contentHeight = CGRectGetHeight(currentContent.bounds);
+            if (fabs([settled[0] doubleValue] - parentWidth) <= 1.0 &&
+                fabs([settled[1] doubleValue] - parentHeight) <= 1.0 &&
+                fabs([settled[2] doubleValue] - contentHeight) <= 1.0) return;
+        }
+    }
+    if ([objc_getAssociatedObject(playerController, &kDYFSPlayerLayoutPendingKey) boolValue]) return;
+
+    objc_setAssociatedObject(playerController, &kDYFSPlayerLayoutPendingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    __weak id weakController = playerController;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.18 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        id strongController = weakController;
+        if (!strongController) return;
+        objc_setAssociatedObject(strongController, &kDYFSPlayerLayoutPendingKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+        UIViewController *vc = [strongController isKindOfClass:UIViewController.class]
+            ? (UIViewController *)strongController : nil;
+        UIView *content = DYFSSafeValueForKey(strongController, @"contentView");
+        UIView *parent = [content isKindOfClass:UIView.class] ? content.superview : nil;
+        if (!content.window || !parent.window) return;
+
+        CGFloat parentHeight = CGRectGetHeight(parent.bounds);
+        NSNumber *previousHeight = objc_getAssociatedObject(content, &kDYFSPlayerParentHeightKey);
+        if (!previousHeight || fabs(previousHeight.doubleValue - parentHeight) > 1.0) {
+            objc_setAssociatedObject(content, &kDYFSPlayerParentHeightKey, @(parentHeight), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            DYFSSchedulePlayerContentHeight(strongController);
+            return;
+        }
+
+        if (vc) {
+            DYFSApplyRecommendationTransparencyInView(vc.view);
+            if (vc.view.superview) DYFSApplyRecommendationTransparencyInView(vc.view.superview);
+        }
+        DYFSApplyPlayerContentHeightNow(strongController);
+
+        CGFloat settledParentWidth = CGRectGetWidth(parent.bounds);
+        CGFloat settledParentHeight = CGRectGetHeight(parent.bounds);
+        CGFloat settledContentHeight = CGRectGetHeight(content.bounds);
+        objc_setAssociatedObject(strongController, &kDYFSPlayerSettledGeometryKey,
+            @[@(settledParentWidth), @(settledParentHeight), @(settledContentHeight)],
+            OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    });
+}
+
 static void DYFSPlayerContentLayoutA(id self, SEL cmd) {
     if (DYFSOriginalPlayerContentA) ((void (*)(id, SEL))DYFSOriginalPlayerContentA)(self, cmd);
-    DYFSApplyPlayerContentHeight(self);
+    UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
+    DYFSApplyRecommendationTransparencyInView(root);
+    if (root.superview) DYFSApplyRecommendationTransparencyInView(root.superview);
+    if (DYFSInProfileContext(root)) DYFSApplyVideoDetailBottomTransparencyInView(root);
+    DYFSSchedulePlayerContentHeight(self);
 }
 static void DYFSPlayerContentLayoutB(id self, SEL cmd) {
     if (DYFSOriginalPlayerContentB) ((void (*)(id, SEL))DYFSOriginalPlayerContentB)(self, cmd);
-    DYFSApplyPlayerContentHeight(self);
+    UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
+    DYFSApplyRecommendationTransparencyInView(root);
+    if (root.superview) DYFSApplyRecommendationTransparencyInView(root.superview);
+    if (DYFSInProfileContext(root)) DYFSApplyVideoDetailBottomTransparencyInView(root);
+    DYFSSchedulePlayerContentHeight(self);
 }
 static void DYFSPlayerContentLayoutC(id self, SEL cmd) {
     if (DYFSOriginalPlayerContentC) ((void (*)(id, SEL))DYFSOriginalPlayerContentC)(self, cmd);
-    DYFSApplyPlayerContentHeight(self);
+    UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
+    DYFSApplyRecommendationTransparencyInView(root);
+    if (root.superview) DYFSApplyRecommendationTransparencyInView(root.superview);
+    if (DYFSInProfileContext(root)) DYFSApplyVideoDetailBottomTransparencyInView(root);
+    DYFSSchedulePlayerContentHeight(self);
 }
 
 static void DYFSLiveElementStackLayout(id self, SEL cmd) {
@@ -779,6 +1060,66 @@ static void DYFSNativeSettingsDidAppear(id self, SEL cmd, BOOL animated) {
     });
 }
 
+static BOOL DYFSIsTabBarControl(UIView *view, Class generalButtonClass, Class plusButtonClass) {
+    if (!view) return NO;
+    NSString *name = NSStringFromClass(view.class);
+    return [view isKindOfClass:UIControl.class] ||
+           (generalButtonClass && [view isKindOfClass:generalButtonClass]) ||
+           (plusButtonClass && [view isKindOfClass:plusButtonClass]) ||
+           [name containsString:@"AWENormalModeTabBarGeneralButton"] ||
+           [name containsString:@"AWENormalModeTabBarGeneralPlusButton"] ||
+           [name containsString:@"AWENormalModeTabBarPlusButton"];
+}
+
+static BOOL DYFSContainsTabBarControl(UIView *view, Class generalButtonClass, Class plusButtonClass, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+    if (DYFSIsTabBarControl(view, generalButtonClass, plusButtonClass)) return YES;
+    for (UIView *subview in view.subviews) {
+        if (DYFSContainsTabBarControl(subview, generalButtonClass, plusButtonClass, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+static void DYFSApplyTabBarBackgroundsRecursively(UIView *container, UIView *tabBar,
+                                                  BOOL enabled, Class generalButtonClass,
+                                                  Class plusButtonClass, Class barBackgroundClass,
+                                                  NSUInteger depth) {
+    if (!container || depth > 10) return;
+    CGFloat barWidth = CGRectGetWidth(tabBar.bounds);
+    CGFloat barHeight = CGRectGetHeight(tabBar.bounds);
+
+    for (UIView *subview in [container.subviews copy]) {
+        if (DYFSIsTabBarControl(subview, generalButtonClass, plusButtonClass)) continue;
+
+        NSString *name = NSStringFromClass(subview.class);
+        CGRect rect = [subview convertRect:subview.bounds toView:tabBar];
+        CGFloat width = CGRectGetWidth(rect);
+        CGFloat height = CGRectGetHeight(rect);
+        CGFloat minX = CGRectGetMinX(rect);
+        CGFloat minY = CGRectGetMinY(rect);
+
+        BOOL namedBackground = (barBackgroundClass && [subview isKindOfClass:barBackgroundClass]) ||
+            [name containsString:@"Background"] || [name containsString:@"Backdrop"] ||
+            [name containsString:@"Blur"] || [subview isKindOfClass:UIVisualEffectView.class];
+        BOOL fillsBar = barWidth > 0.0 && barHeight > 0.0 &&
+            width >= barWidth * 0.88 && minX <= barWidth * 0.06 &&
+            height >= MAX(24.0, barHeight * 0.40) && height <= barHeight * 1.35 &&
+            minY <= barHeight * 0.38 && CGRectGetMaxY(rect) >= barHeight * 0.50;
+        BOOL plainFullBarBackground = [subview isMemberOfClass:UIView.class] &&
+            fillsBar && !DYFSContainsTabBarControl(subview, generalButtonClass, plusButtonClass, 0);
+        BOOL divider = height > 0.0 && height < 1.2 && width >= barWidth * 0.75;
+
+        if (namedBackground || plainFullBarBackground || divider) {
+            subview.hidden = enabled;
+            if (namedBackground || plainFullBarBackground) subview.backgroundColor = UIColor.clearColor;
+        }
+        if (!subview.hidden) {
+            DYFSApplyTabBarBackgroundsRecursively(subview, tabBar, enabled, generalButtonClass,
+                                                   plusButtonClass, barBackgroundClass, depth + 1);
+        }
+    }
+}
+
 static void DYFSApplyTabBarTransparency(UIView *tabBar) {
     if (!tabBar) return;
 
@@ -811,26 +1152,9 @@ static void DYFSApplyTabBarTransparency(UIView *tabBar) {
         barHeight = 49.0 + MAX(0.0, tabBar.window.safeAreaInsets.bottom);
     }
 
-    for (UIView *subview in [tabBar.subviews copy]) {
-        if ((generalButtonClass && [subview isKindOfClass:generalButtonClass]) ||
-            (plusButtonClass && [subview isKindOfClass:plusButtonClass])) {
-            continue;
-        }
-
-        CGFloat subviewHeight = CGRectGetHeight(subview.frame);
-        CGFloat subviewWidth = CGRectGetWidth(subview.frame);
-        BOOL isBackgroundView = (barBackgroundClass && [subview isKindOfClass:barBackgroundClass]) ||
-            ([subview isMemberOfClass:UIView.class] &&
-             barHeight > 0.0 && fabs(subviewHeight - barHeight) < 1.0);
-        BOOL isDivider = (subviewHeight > 0.0 && subviewHeight < 1.0 && subviewWidth > 300.0);
-
-        if (isBackgroundView) {
-            subview.hidden = shouldHideBackgrounds;
-        }
-        if (isDivider) {
-            subview.hidden = enabled;
-        }
-    }
+    DYFSApplyTabBarBackgroundsRecursively(tabBar, tabBar, shouldHideBackgrounds,
+                                          generalButtonClass, plusButtonClass,
+                                          barBackgroundClass, 0);
 
     DYFSLastHomeTabSelected = isHomeSelected;
     DYFSLastTabBackgroundHidden = shouldHideBackgrounds;
@@ -844,6 +1168,16 @@ static void DYFSTabBarLayout(id self, SEL cmd) {
 
 static void DYFSTabBarSetHidden(id self, SEL cmd, BOOL hidden) {
     if (DYFSOriginalTabBarHidden) ((void (*)(id, SEL, BOOL))DYFSOriginalTabBarHidden)(self, cmd, hidden);
+    DYFSApplyTabBarTransparency((UIView *)self);
+}
+
+static void DYFSTabBarDidMoveToWindow(id self, SEL cmd) {
+    if (DYFSOriginalTabBarDidMove) ((void (*)(id, SEL))DYFSOriginalTabBarDidMove)(self, cmd);
+    DYFSApplyTabBarTransparency((UIView *)self);
+}
+
+static void DYFSTabBarDidAddSubview(id self, SEL cmd, UIView *subview) {
+    if (DYFSOriginalTabBarDidAddSubview) ((void (*)(id, SEL, UIView *))DYFSOriginalTabBarDidAddSubview)(self, cmd, subview);
     DYFSApplyTabBarTransparency((UIView *)self);
 }
 
@@ -983,14 +1317,18 @@ static void DYFSFeedTableLayout(id self, SEL cmd) {
     if (!parent || DYFSInProfileContext(view) || DYFSIsLivePreStreamContext(view)) return;
     CGRect frame = view.frame;
     CGFloat targetHeight = CGRectGetHeight(parent.bounds);
-    if (!isfinite(targetHeight) || targetHeight <= 1.0 ||
-        fabs(CGRectGetHeight(frame) - targetHeight) <= 0.5) return;
+    if (!isfinite(targetHeight) || targetHeight <= 1.0) return;
+    if (fabs(CGRectGetHeight(frame) - targetHeight) <= 0.5 &&
+        fabs(CGRectGetMinY(frame)) <= 0.5) return;
 
     CGFloat oldHeight = CGRectGetHeight(frame);
+    CGFloat oldY = CGRectGetMinY(frame);
+    frame.origin.y = 0.0;
     frame.size.height = targetHeight;
     view.frame = frame;
     DYFSLayoutFixCount++;
-    DYFSLog([NSString stringWithFormat:@"AWEFeedTableView height %.2f -> %.2f", oldHeight, targetHeight]);
+    DYFSLog([NSString stringWithFormat:@"AWEFeedTableView frame y %.2f -> %.2f, height %.2f -> %.2f",
+             oldY, CGRectGetMinY(frame), oldHeight, targetHeight]);
 }
 
 static void DYFSLeftSidebarIconDidMove(id self, SEL cmd) {
@@ -1104,6 +1442,34 @@ static void DYFSInstallHooks(void) {
                     (IMP)DYFSTabBarSetHidden, &DYFSOriginalTabBarHidden);
     }
 
+    cls = NSClassFromString(@"AWENormalModeTabBar");
+    if (cls) {
+        if (!DYFSInstalledTabBarDidMove) {
+            DYFSInstalledTabBarDidMove = DYFSInstallHook(cls, @selector(didMoveToWindow),
+                (IMP)DYFSTabBarDidMoveToWindow, &DYFSOriginalTabBarDidMove);
+        }
+        if (!DYFSInstalledTabBarDidAddSubview) {
+            DYFSInstalledTabBarDidAddSubview = DYFSInstallHook(cls, @selector(didAddSubview:),
+                (IMP)DYFSTabBarDidAddSubview, &DYFSOriginalTabBarDidAddSubview);
+        }
+    }
+
+    cls = NSClassFromString(@"AWEAwemeDetailTableViewController");
+    if (cls && !DYFSInstalledDetailTable) {
+        DYFSInstalledDetailTable = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+            (IMP)DYFSDetailTableLayout, &DYFSOriginalDetailTableLayout);
+    }
+    cls = NSClassFromString(@"AWEAwemeDetailCellViewController");
+    if (cls && !DYFSInstalledDetailCell) {
+        DYFSInstalledDetailCell = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+            (IMP)DYFSDetailCellLayout, &DYFSOriginalDetailCellLayout);
+    }
+    cls = NSClassFromString(@"AWEMixVideoPanelDetailTableViewController");
+    if (cls && !DYFSInstalledMixPanelDetail) {
+        DYFSInstalledMixPanelDetail = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+            (IMP)DYFSMixPanelDetailLayout, &DYFSOriginalMixPanelDetailLayout);
+    }
+
     cls = NSClassFromString(@"AWESettingsTableViewController");
     if (cls && !DYFSInstalledNativeSettingsSwitch) {
         DYFSInstalledNativeSettingsSwitch = DYFSInstallHook(cls, @selector(viewDidAppear:),
@@ -1136,8 +1502,18 @@ static void DYFSScheduleHooks(void) {
         BOOL sidebarInstalled = DYFSInstalledSidebarIcon || DYFSInstalledSidebarRight;
         BOOL tabBarInstalled = DYFSInstalledTabBarLayout && DYFSInstalledTabBarHidden;
         BOOL playerLayoutInstalled = DYFSInstalledPlayerContentB || DYFSInstalledPlayerContentC;
+        BOOL detailTransparencyInstalled = DYFSInstalledDetailTable || DYFSInstalledDetailCell || DYFSInstalledMixPanelDetail;
+
+        if (!DYFSStartupRelayoutScheduled && layoutInstalled && tabBarInstalled && playerLayoutInstalled) {
+            DYFSStartupRelayoutScheduled = YES;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ DYFSRequestRelayout(); });
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.65 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ DYFSRequestRelayout(); });
+        }
+
         if ((!layoutInstalled || !sidebarInstalled || !tabBarInstalled || !DYFSInstalledNativeSettingsSwitch ||
-             !playerLayoutInstalled || !DYFSInstalledLiveStack) && DYFSInstallAttempts < 60) {
+             !playerLayoutInstalled || !DYFSInstalledLiveStack || !detailTransparencyInstalled) && DYFSInstallAttempts < 60) {
             DYFSScheduleHooks();
         }
     });
