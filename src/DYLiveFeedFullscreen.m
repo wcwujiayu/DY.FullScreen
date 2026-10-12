@@ -2,8 +2,10 @@
 // DYLiveFeedFullscreen.m
 // DY.FullScreen
 //
-// Narrowly ports DYYY's feed-player content-height correction to live-feed
-// cards only. Existing DY.FullScreen video/profile/layout hooks are untouched.
+// Scoped port of DYYY's feed interaction-container layout for live cards.
+// This module does NOT resize the video player/contentView or hook UIView
+// setFrame:. It only adjusts AWEPlayInteractionViewController's view height
+// when the live-feed context is positively identified.
 //
 
 #import "DYLiveFeedFullscreen.h"
@@ -12,55 +14,26 @@
 #import <stdlib.h>
 
 static NSString * const DYLiveFeedCellClassName = @"IESLiveInnerFeedLiveRoomCell";
-static NSString * const DYLiveFeedPlayerClassA = @"AWEDPlayerFeedPlayerViewController";
-static NSString * const DYLiveFeedPlayerClassB = @"AWEDPlayerViewController_Merge";
-static NSString * const DYLiveFeedPlayerClassC = @"AWEAwemePlayVideoViewController";
+static NSString * const DYLiveFeedInteractionClassName = @"AWEPlayInteractionViewController";
 static NSString * const DYLiveFeedTabBarClassName = @"AWENormalModeTabBar";
 
-static IMP DYLiveFeedOriginalCellLayout = NULL;
-static IMP DYLiveFeedOriginalViewSetFrame = NULL;
-static IMP DYLiveFeedOriginalPlayerLayoutA = NULL;
-static IMP DYLiveFeedOriginalPlayerLayoutB = NULL;
-
-static BOOL DYLiveFeedCellHookInstalled = NO;
-static BOOL DYLiveFeedViewFrameHookInstalled = NO;
-static BOOL DYLiveFeedPlayerHookAInstalled = NO;
-static BOOL DYLiveFeedPlayerHookBInstalled = NO;
+static IMP DYLiveFeedOriginalInteractionLayout = NULL;
+static BOOL DYLiveFeedInteractionHookInstalled = NO;
 static BOOL DYLiveFeedInstallScheduled = NO;
 static NSUInteger DYLiveFeedInstallAttempts = 0;
 
 static void DYLiveFeedInstallHooks(void);
 static void DYLiveFeedScheduleInstall(void);
-static void DYLiveFeedCellLayoutSubviews(id self, SEL command);
-static void DYLiveFeedViewSetFrame(id self, SEL command, CGRect frame);
-static void DYLiveFeedPlayerLayoutA(id self, SEL command);
-static void DYLiveFeedPlayerLayoutB(id self, SEL command);
+static void DYLiveFeedInteractionLayout(id self, SEL command);
+static void DYLiveFeedApplyInteractionLayout(UIViewController *controller);
 
 static void DYLiveFeedLog(NSString *message) {
-    NSLog(@"[DY.FullScreen][LiveFeed] %@", message);
+    NSLog(@"[DY.FullScreen][LiveFeedInteraction] %@", message);
 }
 
-static BOOL DYLiveFeedClassNameMatches(NSString *className, NSString *targetName) {
-    return className.length > 0 && targetName.length > 0 &&
-           ([className isEqualToString:targetName] || [className hasSuffix:targetName]);
-}
-
-static UIView *DYLiveFeedContainingCell(UIView *view) {
-    for (UIView *cursor = view; cursor; cursor = cursor.superview) {
-        NSString *name = NSStringFromClass(cursor.class);
-        if (DYLiveFeedClassNameMatches(name, DYLiveFeedCellClassName)) {
-            return cursor;
-        }
-    }
-    return nil;
-}
-
-static BOOL DYLiveFeedIsSupportedPlayerController(id object) {
-    if (![object isKindOfClass:UIViewController.class]) return NO;
-    NSString *name = NSStringFromClass([object class]);
-    return DYLiveFeedClassNameMatches(name, DYLiveFeedPlayerClassA) ||
-           DYLiveFeedClassNameMatches(name, DYLiveFeedPlayerClassB) ||
-           DYLiveFeedClassNameMatches(name, DYLiveFeedPlayerClassC);
+static BOOL DYLiveFeedClassMatches(NSString *name, NSString *target) {
+    return name.length > 0 && target.length > 0 &&
+           ([name isEqualToString:target] || [name hasSuffix:target]);
 }
 
 static id DYLiveFeedSafeValue(id object, NSString *key) {
@@ -72,9 +45,85 @@ static id DYLiveFeedSafeValue(id object, NSString *key) {
     }
 }
 
+static UIView *DYLiveFeedContainingCell(UIView *view) {
+    for (UIView *cursor = view; cursor; cursor = cursor.superview) {
+        if (DYLiveFeedClassMatches(NSStringFromClass(cursor.class), DYLiveFeedCellClassName)) {
+            return cursor;
+        }
+    }
+    return nil;
+}
+
+static BOOL DYLiveFeedModelHasLiveSignal(id model) {
+    if (!model) return NO;
+
+    id liveValue = DYLiveFeedSafeValue(model, @"isLive");
+    if ([liveValue respondsToSelector:@selector(boolValue)] && [liveValue boolValue]) return YES;
+
+    id roomValue = DYLiveFeedSafeValue(model, @"cellRoom");
+    if (roomValue && roomValue != NSNull.null) return YES;
+
+    id tagValue = DYLiveFeedSafeValue(model, @"videoFeedTag");
+    return [tagValue isKindOfClass:NSString.class] && [tagValue isEqualToString:@"直播中"];
+}
+
+static BOOL DYLiveFeedControllerHasLiveSignal(UIViewController *controller) {
+    if (!controller) return NO;
+
+    // DYYY uses isLive, cellRoom, and videoFeedTag == "直播中" as live signals.
+    NSArray<NSString *> *keys = @[@"model", @"awemeModel", @"itemModel", @"aweme", @"item"];
+    for (NSString *key in keys) {
+        if (DYLiveFeedModelHasLiveSignal(DYLiveFeedSafeValue(controller, key))) return YES;
+    }
+    return NO;
+}
+
+static BOOL DYLiveFeedIsActualLiveRoom(UIView *view, UIViewController *controller) {
+    NSArray<NSString *> *roomMarkers = @[
+        @"IESLiveAudienceViewController",
+        @"AWELiveAudienceViewController",
+        @"LiveRoomViewController",
+        @"LiveRoomContainerViewController"
+    ];
+
+    for (UIView *cursor = view; cursor; cursor = cursor.superview) {
+        NSString *name = NSStringFromClass(cursor.class);
+        for (NSString *marker in roomMarkers) {
+            if ([name containsString:marker]) return YES;
+        }
+    }
+
+    UIResponder *responder = view;
+    for (NSUInteger depth = 0; responder && depth < 64; depth++, responder = responder.nextResponder) {
+        NSString *name = NSStringFromClass(responder.class);
+        for (NSString *marker in roomMarkers) {
+            if ([name containsString:marker]) return YES;
+        }
+    }
+
+    UIViewController *cursor = controller;
+    for (NSUInteger depth = 0; cursor && depth < 24; depth++, cursor = cursor.parentViewController) {
+        NSString *name = NSStringFromClass(cursor.class);
+        for (NSString *marker in roomMarkers) {
+            if ([name containsString:marker]) return YES;
+        }
+    }
+    return NO;
+}
+
+static BOOL DYLiveFeedIsLiveCardInteraction(UIViewController *controller) {
+    if (!controller || ![controller isKindOfClass:UIViewController.class]) return NO;
+    UIView *view = controller.view;
+
+    // Prefer structural identification; model flags cover builds where the
+    // interaction controller sits beside rather than inside the live feed cell.
+    if (DYLiveFeedContainingCell(view)) return YES;
+    return DYLiveFeedControllerHasLiveSignal(controller);
+}
+
 static CGFloat DYLiveFeedFindTabBarHeight(UIView *root, NSUInteger depth) {
-    if (!root || depth > 18) return 0.0;
-    if (DYLiveFeedClassNameMatches(NSStringFromClass(root.class), DYLiveFeedTabBarClassName)) {
+    if (!root || depth > 24) return 0.0;
+    if (DYLiveFeedClassMatches(NSStringFromClass(root.class), DYLiveFeedTabBarClassName)) {
         CGFloat height = CGRectGetHeight(root.bounds);
         if (isfinite(height) && height >= 30.0) return height;
     }
@@ -89,150 +138,83 @@ static CGFloat DYLiveFeedTabBarHeightForView(UIView *view) {
     UIWindow *window = view.window;
     if (!window) {
         for (UIWindow *candidate in UIApplication.sharedApplication.windows.reverseObjectEnumerator) {
-            if (candidate.isKeyWindow) {
-                window = candidate;
-                break;
-            }
+            if (candidate.isKeyWindow) { window = candidate; break; }
         }
     }
 
     CGFloat measured = DYLiveFeedFindTabBarHeight(window, 0);
-    if (measured >= 30.0) return measured;
-
-    // Same fallback used by DYYY when the native tab-bar view is not yet laid out.
-    CGFloat safeBottom = window ? window.safeAreaInsets.bottom : 0.0;
-    return 49.0 + MAX(0.0, safeBottom);
+    if (measured >= 30.0 && window &&
+        measured < CGRectGetHeight(window.bounds)) {
+        return measured;
+    }
+    return 49.0 + MAX(0.0, window ? window.safeAreaInsets.bottom : 0.0);
 }
 
-static UIViewController *DYLiveFeedOwningController(UIView *view) {
-    UIResponder *responder = view;
-    for (NSUInteger depth = 0; responder && depth < 64; depth++, responder = responder.nextResponder) {
-        if ([responder isKindOfClass:UIViewController.class]) {
-            return (UIViewController *)responder;
-        }
-    }
-    return nil;
+static BOOL DYLiveFeedReferNeedsFullHeight(NSString *referString) {
+    // Port of DYYY's AWEPlayInteractionViewController.viewDidLayoutSubviews.
+    // DYYY treats a nil referString as full-height, and these routes explicitly
+    // require full-height; normal feed routes remain above the bottom tab bar.
+    if (!referString) return YES;
+    NSArray<NSString *> *fullHeightReferStrings = @[
+        @"general_search",
+        @"search_result",
+        @"search_ecommerce",
+        @"close_friends_moment",
+        @"offline_mode",
+        @"challenge",
+        @"general_search_scan"
+    ];
+    return [fullHeightReferStrings containsObject:referString];
 }
 
-// Mirrors DYYY's UIView -setFrame: correction, but applies only to a player
-// view physically inside IESLiveInnerFeedLiveRoomCell. This catches the
-// intermediate full-width player wrapper whose parent is already tall while
-// contentView itself may still be constrained to a landscape-sized sibling.
-static BOOL DYLiveFeedAdjustIncomingFrame(UIView *view, CGRect *incomingFrame) {
-    if (!view || !incomingFrame || !view.superview) return NO;
+static void DYLiveFeedApplyInteractionLayout(UIViewController *controller) {
+    if (!controller || ![NSThread isMainThread]) return;
 
-    UIViewController *controller = DYLiveFeedOwningController(view);
-    if (!DYLiveFeedIsSupportedPlayerController(controller)) return NO;
-
-    UIView *cell = DYLiveFeedContainingCell(view);
-    if (!cell) cell = DYLiveFeedContainingCell(controller.view);
-    if (!cell) return NO;
-
-    // Match DYYY's origin guard so offset/positioned overlay elements are left alone.
-    if (fabs(incomingFrame->origin.x) > 0.5 && fabs(incomingFrame->origin.y) > 0.5) return NO;
-
-    UIView *parent = view.superview;
-    CGFloat parentHeight = CGRectGetHeight(parent.bounds);
-    CGFloat currentHeight = CGRectGetHeight(*incomingFrame);
-    CGFloat parentWidth = CGRectGetWidth(parent.bounds);
-    CGFloat currentWidth = CGRectGetWidth(*incomingFrame);
-    if (!isfinite(parentHeight) || !isfinite(currentHeight) ||
-        parentHeight <= 1.0 || currentHeight <= 1.0 ||
-        parentWidth <= 1.0 || currentWidth < parentWidth * 0.65) {
-        return NO;
-    }
-
-    CGFloat deficit = parentHeight - currentHeight;
-    // Most subviews do not need a tab-bar lookup. Filter by geometry first.
-    if (deficit < 30.0 || deficit > parentHeight * 0.65) return NO;
-
-    CGFloat tabBarHeight = DYLiveFeedTabBarHeightForView(view);
-    CGFloat tolerance = MAX(1.0, tabBarHeight * 0.03);
-    if (!isfinite(tabBarHeight) || tabBarHeight < 30.0 ||
-        fabs(deficit - tabBarHeight) > tolerance) {
-        return NO;
-    }
-
-    incomingFrame->size.height = parentHeight;
-    DYLiveFeedLog([NSString stringWithFormat:
-        @"setFrame live-card player wrapper %@ height %.2f -> %.2f (parent %.2f, tab bar %.2f)",
-        NSStringFromClass(view.class), currentHeight, parentHeight, parentHeight, tabBarHeight]);
-    return YES;
-}
-
-static void DYLiveFeedApplyDYYYContentHeightRule(id playerController) {
-    if (!DYLiveFeedIsSupportedPlayerController(playerController)) return;
-
-    UIViewController *controller = (UIViewController *)playerController;
-    UIView *controllerView = controller.view;
-
-    // The feed-cell ancestor is the positive scope. A full live-room controller
-    // entered from a card is no longer under this cell and is therefore untouched.
-    UIView *cell = DYLiveFeedContainingCell(controllerView);
-    if (!cell || !controllerView.window) return;
-
-    id value = DYLiveFeedSafeValue(playerController, @"contentView");
-    if (![value isKindOfClass:UIView.class]) return;
-    UIView *contentView = (UIView *)value;
-    UIView *parent = contentView.superview;
-    if (!parent || !contentView.window || !parent.window ||
-        !DYLiveFeedContainingCell(contentView)) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:@"com.dy.fullscreen.enabled"] != nil &&
+        ![defaults boolForKey:@"com.dy.fullscreen.enabled"]) {
         return;
     }
 
+    UIView *view = controller.view;
+    if (!view || !view.window || !view.superview) return;
+    if (DYLiveFeedIsActualLiveRoom(view, controller)) return;
+    if (!DYLiveFeedIsLiveCardInteraction(controller)) return;
+
+    UIView *parent = view.superview;
     CGFloat parentHeight = CGRectGetHeight(parent.bounds);
-    CGFloat currentHeight = CGRectGetHeight(contentView.frame);
-    CGFloat tabBarHeight = DYLiveFeedTabBarHeightForView(contentView);
-    if (!isfinite(parentHeight) || !isfinite(currentHeight) ||
-        parentHeight <= 1.0 || currentHeight <= 1.0 ||
+    CGFloat tabBarHeight = DYLiveFeedTabBarHeightForView(view);
+    if (!isfinite(parentHeight) || parentHeight <= 1.0 ||
         !isfinite(tabBarHeight) || tabBarHeight < 30.0) {
         return;
     }
 
-    // Mirrors DYYY's AWEDPlayerFeedPlayerViewController /
-    // AWEDPlayerViewController_Merge contentView rule: only alter the player
-    // surface when the height deficit matches one or two native tab-bar heights.
-    CGFloat deficit = parentHeight - currentHeight;
-    CGFloat tolerance = MAX(1.0, tabBarHeight * 0.03);
-    CGFloat targetHeight = currentHeight;
+    NSString *referString = DYLiveFeedSafeValue(controller, @"referString");
+    BOOL useFullHeight = DYLiveFeedReferNeedsFullHeight(referString);
 
-    if (fabs(deficit - tabBarHeight) <= tolerance) {
-        targetHeight = parentHeight;
-    } else if (fabs(deficit - (tabBarHeight * 2.0)) <= tolerance) {
-        targetHeight = parentHeight - tabBarHeight;
-    } else {
-        return;
+    // Same special handling as DYYY: live items in the chat route keep the
+    // regular interaction area rather than being extended behind the tab bar.
+    if (!useFullHeight && [referString isEqualToString:@"chat"] &&
+        DYLiveFeedControllerHasLiveSignal(controller)) {
+        useFullHeight = NO;
     }
 
-    if (!isfinite(targetHeight) || targetHeight <= 1.0 ||
-        fabs(currentHeight - targetHeight) <= 0.5) {
-        return;
-    }
+    CGFloat targetHeight = useFullHeight ? parentHeight : parentHeight - tabBarHeight;
+    if (!isfinite(targetHeight) || targetHeight <= 1.0) return;
 
-    CGRect frame = contentView.frame;
+    CGRect frame = view.frame;
+    CGFloat oldHeight = CGRectGetHeight(frame);
+    if (fabs(oldHeight - targetHeight) <= 0.5) return;
+
+    // Only the interaction container changes. Do not resize the live video,
+    // player contentView, caption subviews, or individual buttons.
     frame.size.height = targetHeight;
-    contentView.frame = frame;
-    [contentView setNeedsLayout];
+    view.frame = frame;
 
     DYLiveFeedLog([NSString stringWithFormat:
-        @"%@ contentView height %.2f -> %.2f (parent %.2f, tab bar %.2f)",
-        NSStringFromClass([playerController class]), currentHeight,
-        targetHeight, parentHeight, tabBarHeight]);
-}
-
-static void DYLiveFeedScanViewTree(UIView *root, NSUInteger depth) {
-    if (!root || depth > 36) return;
-
-    // A controller is normally the next responder of its root view. Avoid
-    // walking responder chains for every leaf during a scrolling layout pass.
-    UIResponder *next = root.nextResponder;
-    if (DYLiveFeedIsSupportedPlayerController(next)) {
-        DYLiveFeedApplyDYYYContentHeightRule(next);
-    }
-
-    for (UIView *subview in [root.subviews copy]) {
-        DYLiveFeedScanViewTree(subview, depth + 1);
-    }
+        @"interaction container %@ height %.2f -> %.2f (parent %.2f, tab bar %.2f, refer %@)",
+        NSStringFromClass(controller.class), oldHeight, targetHeight, parentHeight,
+        tabBarHeight, referString ?: @"<nil>"]);
 }
 
 static Method DYLiveFeedOwnInstanceMethod(Class cls, SEL selector) {
@@ -279,97 +261,32 @@ static BOOL DYLiveFeedInstallInstanceHook(Class cls, SEL selector,
     return *originalOut != NULL;
 }
 
-static void DYLiveFeedCellLayoutSubviews(id self, SEL command) {
-    if (DYLiveFeedOriginalCellLayout) {
-        ((void (*)(id, SEL))DYLiveFeedOriginalCellLayout)(self, command);
-    }
-    if ([self isKindOfClass:UIView.class]) {
-        [[DYLiveFeedFullscreen sharedInstance] processLiveFeedView:(UIView *)self];
-    }
-}
-
-static void DYLiveFeedViewSetFrame(id self, SEL command, CGRect frame) {
-    if (!DYLiveFeedOriginalViewSetFrame) return;
-
-    if (![NSThread isMainThread]) {
-        __weak UIView *weakView = [self isKindOfClass:UIView.class] ? (UIView *)self : nil;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIView *strongView = weakView;
-            if (strongView) [strongView setFrame:frame];
-        });
-        return;
-    }
-
-    UIView *view = [self isKindOfClass:UIView.class] ? (UIView *)self : nil;
-    if (view) DYLiveFeedAdjustIncomingFrame(view, &frame);
-    ((void (*)(id, SEL, CGRect))DYLiveFeedOriginalViewSetFrame)(self, command, frame);
-}
-
-static void DYLiveFeedPlayerLayoutA(id self, SEL command) {
-    if (DYLiveFeedOriginalPlayerLayoutA) {
-        ((void (*)(id, SEL))DYLiveFeedOriginalPlayerLayoutA)(self, command);
+static void DYLiveFeedInteractionLayout(id self, SEL command) {
+    if (DYLiveFeedOriginalInteractionLayout) {
+        ((void (*)(id, SEL))DYLiveFeedOriginalInteractionLayout)(self, command);
     }
     if ([self isKindOfClass:UIViewController.class]) {
-        UIView *root = ((UIViewController *)self).view;
-        DYLiveFeedApplyDYYYContentHeightRule(self);
-        [[DYLiveFeedFullscreen sharedInstance] processLiveFeedView:root];
-    }
-}
-
-static void DYLiveFeedPlayerLayoutB(id self, SEL command) {
-    if (DYLiveFeedOriginalPlayerLayoutB) {
-        ((void (*)(id, SEL))DYLiveFeedOriginalPlayerLayoutB)(self, command);
-    }
-    if ([self isKindOfClass:UIViewController.class]) {
-        UIView *root = ((UIViewController *)self).view;
-        DYLiveFeedApplyDYYYContentHeightRule(self);
-        [[DYLiveFeedFullscreen sharedInstance] processLiveFeedView:root];
+        DYLiveFeedApplyInteractionLayout((UIViewController *)self);
     }
 }
 
 static void DYLiveFeedInstallHooks(void) {
     DYLiveFeedInstallAttempts++;
-    BOOL allInstalled = YES;
+    if (DYLiveFeedInteractionHookInstalled) return;
 
-    if (!DYLiveFeedViewFrameHookInstalled) {
-        DYLiveFeedViewFrameHookInstalled = DYLiveFeedInstallInstanceHook(
-            UIView.class, @selector(setFrame:), (IMP)DYLiveFeedViewSetFrame,
-            &DYLiveFeedOriginalViewSetFrame);
-        if (DYLiveFeedViewFrameHookInstalled) DYLiveFeedLog(@"hooked scoped UIView -setFrame: for live-feed player wrappers");
-        allInstalled &= DYLiveFeedViewFrameHookInstalled;
+    Class cls = NSClassFromString(DYLiveFeedInteractionClassName);
+    DYLiveFeedInteractionHookInstalled = DYLiveFeedInstallInstanceHook(
+        cls, @selector(viewDidLayoutSubviews),
+        (IMP)DYLiveFeedInteractionLayout, &DYLiveFeedOriginalInteractionLayout);
+
+    if (DYLiveFeedInteractionHookInstalled) {
+        DYLiveFeedLog(@"hooked AWEPlayInteractionViewController -viewDidLayoutSubviews (interaction layout only)");
+        return;
     }
-
-    if (!DYLiveFeedCellHookInstalled) {
-        Class cls = NSClassFromString(DYLiveFeedCellClassName);
-        DYLiveFeedCellHookInstalled = DYLiveFeedInstallInstanceHook(
-            cls, @selector(layoutSubviews), (IMP)DYLiveFeedCellLayoutSubviews,
-            &DYLiveFeedOriginalCellLayout);
-        if (DYLiveFeedCellHookInstalled) DYLiveFeedLog(@"hooked IESLiveInnerFeedLiveRoomCell -layoutSubviews");
-        allInstalled &= DYLiveFeedCellHookInstalled;
-    }
-
-    if (!DYLiveFeedPlayerHookAInstalled) {
-        Class cls = NSClassFromString(DYLiveFeedPlayerClassA);
-        DYLiveFeedPlayerHookAInstalled = DYLiveFeedInstallInstanceHook(
-            cls, @selector(viewDidLayoutSubviews), (IMP)DYLiveFeedPlayerLayoutA,
-            &DYLiveFeedOriginalPlayerLayoutA);
-        if (DYLiveFeedPlayerHookAInstalled) DYLiveFeedLog(@"hooked AWEDPlayerFeedPlayerViewController -viewDidLayoutSubviews");
-        allInstalled &= DYLiveFeedPlayerHookAInstalled;
-    }
-
-    if (!DYLiveFeedPlayerHookBInstalled) {
-        Class cls = NSClassFromString(DYLiveFeedPlayerClassB);
-        DYLiveFeedPlayerHookBInstalled = DYLiveFeedInstallInstanceHook(
-            cls, @selector(viewDidLayoutSubviews), (IMP)DYLiveFeedPlayerLayoutB,
-            &DYLiveFeedOriginalPlayerLayoutB);
-        if (DYLiveFeedPlayerHookBInstalled) DYLiveFeedLog(@"hooked AWEDPlayerViewController_Merge -viewDidLayoutSubviews");
-        allInstalled &= DYLiveFeedPlayerHookBInstalled;
-    }
-
-    if (!allInstalled && DYLiveFeedInstallAttempts < 60) {
+    if (DYLiveFeedInstallAttempts < 60) {
         DYLiveFeedScheduleInstall();
-    } else if (!allInstalled) {
-        DYLiveFeedLog(@"some live-feed hooks were unavailable after retrying; no global player hook was added");
+    } else {
+        DYLiveFeedLog(@"AWEPlayInteractionViewController hook unavailable after retrying");
     }
 }
 
@@ -386,7 +303,7 @@ static void DYLiveFeedScheduleInstall(void) {
 @implementation DYLiveFeedFullscreen
 
 + (void)load {
-    // Defer until the host app has had an opportunity to register its UIKit classes.
+    // Wait until the app has registered the UIKit/aweme classes before hooking.
     DYLiveFeedScheduleInstall();
 }
 
@@ -404,23 +321,16 @@ static void DYLiveFeedScheduleInstall(void) {
 }
 
 - (void)processLiveFeedView:(UIView *)view {
-    if (!view) return;
-
-    if (![NSThread isMainThread]) {
-        __weak UIView *weakView = view;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIView *strongView = weakView;
-            if (strongView) [self processLiveFeedView:strongView];
-        });
-        return;
+    if (!view || ![NSThread isMainThread]) return;
+    UIViewController *controller = nil;
+    UIResponder *responder = view;
+    for (NSUInteger depth = 0; responder && depth < 64; depth++, responder = responder.nextResponder) {
+        if ([responder isKindOfClass:UIViewController.class]) {
+            controller = (UIViewController *)responder;
+            break;
+        }
     }
-
-    UIView *cell = DYLiveFeedContainingCell(view);
-    if (!cell) return;
-
-    // Scan only inside the matched feed cell. This is intentionally not a
-    // process-wide UIView/frame/bounds hook and cannot resize ordinary posts.
-    DYLiveFeedScanViewTree(cell, 0);
+    if (controller) DYLiveFeedApplyInteractionLayout(controller);
 }
 
 @end
