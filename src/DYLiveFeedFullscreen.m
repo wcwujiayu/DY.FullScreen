@@ -16,6 +16,22 @@
 static IMP DYFSOriginalLiveFeedCellLayout = NULL;
 static BOOL DYFSInstalledLiveFeedCellLayout = NO;
 
+// 探测子树里是否有「进入直播间」文案（用于定位按钮组容器）
+static BOOL DYFSLiveCardSubtreeHasEnterLiveText(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+    if ([view isKindOfClass:UILabel.class] &&
+        [((UILabel *)view).text containsString:@"进入直播间"]) return YES;
+    if ([view isKindOfClass:UIButton.class] &&
+        ([((UIButton *)view).currentTitle containsString:@"进入直播间"] ||
+         [((UIButton *)view).accessibilityLabel containsString:@"进入直播间"])) return YES;
+    NSString *a11y = view.accessibilityLabel ?: @"";
+    if ([a11y containsString:@"进入直播间"]) return YES;
+    for (UIView *sub in view.subviews) {
+        if (DYFSLiveCardSubtreeHasEnterLiveText(sub, depth + 1)) return YES;
+    }
+    return NO;
+}
+
 // 判断子视图是否承载了可见内容（账号、文案、按钮等）。
 // 纯视频层 / 背景层没有文字也没有控件，返回 NO，避免被误移。
 static BOOL DYFSLiveCardSubtreeHasContent(UIView *view, NSUInteger depth) {
@@ -131,35 +147,44 @@ static BOOL DYFSIsPreStreamView(UIView *view) {
     if (![controllerView isKindOfClass:UIView.class] || controllerView.superview != cell) return;
 
     CGFloat cellHeight = CGRectGetHeight(cell.bounds);
-    CGFloat currentHeight = CGRectGetHeight(controllerView.frame);
-    if (CGRectGetWidth(cell.bounds) < 100.0 || cellHeight < 160.0 || currentHeight <= 1.0) return;
+    CGFloat cellWidth = CGRectGetWidth(cell.bounds);
+    if (cellWidth < 100.0 || cellHeight < 160.0) return;
 
-    // 只补偿「差一个底栏高度」或「差两个底栏高度」两种情况，其余一律交给抖音
-    // 自己的布局计算（这与 DYYY 对播放器 contentView 的处理方式一致）。
-    //
-    // 千万不要无条件把观众视图拉伸到 cell.bounds：那样会绕过抖音内部的布局，
-    // 用 frame 定位的标题文案与「进入直播间」按钮不会跟着重排，表现为不居中。
+    // 1) 观众视图撑满整张卡片，视频不留黑边。
+    //    内容的位置不依赖抖音的内部布局，由下面两步自己修正。
+    if (!CGRectEqualToRect(controllerView.frame, cell.bounds)) {
+        controllerView.frame = cell.bounds;
+    }
+
     CGFloat tabBarHeight = DYFSBottomTabBarHeight(cell);
-    CGFloat tolerance = MAX(1.0, tabBarHeight * 0.03);
-    CGFloat diff = cellHeight - currentHeight;
-    CGFloat targetHeight = currentHeight;
+    CGFloat limitY = cellHeight - tabBarHeight;
 
-    if (fabs(diff - tabBarHeight) <= tolerance) {
-        targetHeight = cellHeight;
-    } else if (fabs(diff - tabBarHeight * 2.0) <= tolerance) {
-        targetHeight = cellHeight - tabBarHeight;
-    } else {
-        return;
+    for (UIView *sub in [controllerView.subviews copy]) {
+        if (sub.hidden || sub.alpha <= 0.01) continue;
+
+        CGFloat sw = CGRectGetWidth(sub.frame), sh = CGRectGetHeight(sub.frame);
+        // 铺满容器的多半是视频层或背景层，不参与修正。
+        if (cellWidth > 0 && cellHeight > 0 && sw >= cellWidth * 0.95 && sh >= cellHeight * 0.90) continue;
+        if (!DYFSLiveCardSubtreeHasContent(sub, 0)) continue;
+
+        // 2) 账号 / 文案：底边对齐到底栏上方，不随全屏居中。
+        CGFloat delta = CGRectGetMaxY(sub.frame) - limitY;
+        if (delta > 1.0) {
+            CGRect frame = sub.frame;
+            frame.origin.y -= delta;
+            if (CGRectGetMinY(frame) >= -1.0) sub.frame = frame;
+        }
+
+        // 3) 「进入直播间 + 横屏」按钮组：整体水平居中。
+        if (DYFSLiveCardSubtreeHasEnterLiveText(sub, 0)) {
+            CGFloat dx = (cellWidth - CGRectGetWidth(sub.frame)) / 2.0 - CGRectGetMinX(sub.frame);
+            if (fabs(dx) > 0.5) {
+                CGRect frame = sub.frame;
+                frame.origin.x += dx;
+                sub.frame = frame;
+            }
+        }
     }
-
-    if (fabs(currentHeight - targetHeight) > 0.5) {
-        CGRect frame = controllerView.frame;
-        frame.size.height = targetHeight;
-        controllerView.frame = frame;
-    }
-
-    // 高度补偿之后，再把账号 / 文案 / 按钮顶到底栏上方。
-    DYFSKeepLiveCardContentAboveTabBar(controllerView, tabBarHeight, cellHeight);
 
     [controllerView setNeedsLayout];
     [controllerView layoutIfNeeded];

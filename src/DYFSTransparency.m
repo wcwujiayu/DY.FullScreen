@@ -58,7 +58,8 @@ static BOOL DYFSSubtreeHasControl(UIView *view, NSUInteger depth) {
 
 static BOOL DYFSIsNamedChrome(UIView *view) {
     NSString *name = NSStringFromClass(view.class);
-    return [view isKindOfClass:UIVisualEffectView.class] ||
+    return [name containsString:@"EffectView"] ||
+        [view isKindOfClass:UIVisualEffectView.class] ||
         [name containsString:@"Background"] || [name containsString:@"Backdrop"] ||
         [name containsString:@"Blur"] || [name containsString:@"BackPlate"] ||
         [name containsString:@"Material"] || [name isEqualToString:@"_UIBarBackground"];
@@ -71,6 +72,12 @@ static BOOL DYFSIsPlainBacking(UIView *view) {
 }
 
 static void DYFSClearOwnBackground(UIView *view) {
+    // 毛玻璃底栏（图 2 / 图 3 的黑色半透明）靠 effect 渲染，
+    // 清 backgroundColor 无效；置 nil 后 contentView 里的内容仍然保留。
+    if ([view isKindOfClass:UIVisualEffectView.class]) {
+        ((UIVisualEffectView *)view).effect = nil;
+        return;
+    }
     view.backgroundColor = UIColor.clearColor;
     view.layer.backgroundColor = UIColor.clearColor.CGColor;
     view.opaque = NO;

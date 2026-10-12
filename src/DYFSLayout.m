@@ -46,6 +46,8 @@ void DYFSFeedTableLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
 
     UIView *view = (UIView *)self;
+    // 个人主页（我-作品 / 我-喜欢）也走这张表；透明化不受尺寸守卫影响。
+    DYFSTransparencyApplyInView(view);
     UIView *parent = view.superview;
     if (!parent || DYFSInProfileContext(view) || DYFSIsActualLiveRoomContext(view) || DYFSIsLivePreStreamContext(view)) return;
     CGRect frame = view.frame;
@@ -71,6 +73,7 @@ void DYFSStoryContainerLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
 
     UIView *container = (UIView *)self;
+    DYFSTransparencyApplyInView(container);
     if (DYFSInProfileContext(container) || DYFSIsActualLiveRoomContext(container) || DYFSIsLivePreStreamContext(container)) return;
 
     id homeValue = DYFSSafeValueForKey(container, @"enableEnterProfile");
