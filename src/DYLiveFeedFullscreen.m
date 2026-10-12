@@ -14,13 +14,16 @@
 static NSString * const DYLiveFeedCellClassName = @"IESLiveInnerFeedLiveRoomCell";
 static NSString * const DYLiveFeedPlayerClassA = @"AWEDPlayerFeedPlayerViewController";
 static NSString * const DYLiveFeedPlayerClassB = @"AWEDPlayerViewController_Merge";
+static NSString * const DYLiveFeedPlayerClassC = @"AWEAwemePlayVideoViewController";
 static NSString * const DYLiveFeedTabBarClassName = @"AWENormalModeTabBar";
 
 static IMP DYLiveFeedOriginalCellLayout = NULL;
+static IMP DYLiveFeedOriginalViewSetFrame = NULL;
 static IMP DYLiveFeedOriginalPlayerLayoutA = NULL;
 static IMP DYLiveFeedOriginalPlayerLayoutB = NULL;
 
 static BOOL DYLiveFeedCellHookInstalled = NO;
+static BOOL DYLiveFeedViewFrameHookInstalled = NO;
 static BOOL DYLiveFeedPlayerHookAInstalled = NO;
 static BOOL DYLiveFeedPlayerHookBInstalled = NO;
 static BOOL DYLiveFeedInstallScheduled = NO;
@@ -29,6 +32,7 @@ static NSUInteger DYLiveFeedInstallAttempts = 0;
 static void DYLiveFeedInstallHooks(void);
 static void DYLiveFeedScheduleInstall(void);
 static void DYLiveFeedCellLayoutSubviews(id self, SEL command);
+static void DYLiveFeedViewSetFrame(id self, SEL command, CGRect frame);
 static void DYLiveFeedPlayerLayoutA(id self, SEL command);
 static void DYLiveFeedPlayerLayoutB(id self, SEL command);
 
@@ -55,7 +59,8 @@ static BOOL DYLiveFeedIsSupportedPlayerController(id object) {
     if (![object isKindOfClass:UIViewController.class]) return NO;
     NSString *name = NSStringFromClass([object class]);
     return DYLiveFeedClassNameMatches(name, DYLiveFeedPlayerClassA) ||
-           DYLiveFeedClassNameMatches(name, DYLiveFeedPlayerClassB);
+           DYLiveFeedClassNameMatches(name, DYLiveFeedPlayerClassB) ||
+           DYLiveFeedClassNameMatches(name, DYLiveFeedPlayerClassC);
 }
 
 static id DYLiveFeedSafeValue(id object, NSString *key) {
@@ -97,6 +102,62 @@ static CGFloat DYLiveFeedTabBarHeightForView(UIView *view) {
     // Same fallback used by DYYY when the native tab-bar view is not yet laid out.
     CGFloat safeBottom = window ? window.safeAreaInsets.bottom : 0.0;
     return 49.0 + MAX(0.0, safeBottom);
+}
+
+static UIViewController *DYLiveFeedOwningController(UIView *view) {
+    UIResponder *responder = view;
+    for (NSUInteger depth = 0; responder && depth < 64; depth++, responder = responder.nextResponder) {
+        if ([responder isKindOfClass:UIViewController.class]) {
+            return (UIViewController *)responder;
+        }
+    }
+    return nil;
+}
+
+// Mirrors DYYY's UIView -setFrame: correction, but applies only to a player
+// view physically inside IESLiveInnerFeedLiveRoomCell. This catches the
+// intermediate full-width player wrapper whose parent is already tall while
+// contentView itself may still be constrained to a landscape-sized sibling.
+static BOOL DYLiveFeedAdjustIncomingFrame(UIView *view, CGRect *incomingFrame) {
+    if (!view || !incomingFrame || !view.superview) return NO;
+
+    UIViewController *controller = DYLiveFeedOwningController(view);
+    if (!DYLiveFeedIsSupportedPlayerController(controller)) return NO;
+
+    UIView *cell = DYLiveFeedContainingCell(view);
+    if (!cell) cell = DYLiveFeedContainingCell(controller.view);
+    if (!cell) return NO;
+
+    // Match DYYY's origin guard so offset/positioned overlay elements are left alone.
+    if (fabs(incomingFrame->origin.x) > 0.5 && fabs(incomingFrame->origin.y) > 0.5) return NO;
+
+    UIView *parent = view.superview;
+    CGFloat parentHeight = CGRectGetHeight(parent.bounds);
+    CGFloat currentHeight = CGRectGetHeight(*incomingFrame);
+    CGFloat parentWidth = CGRectGetWidth(parent.bounds);
+    CGFloat currentWidth = CGRectGetWidth(*incomingFrame);
+    if (!isfinite(parentHeight) || !isfinite(currentHeight) ||
+        parentHeight <= 1.0 || currentHeight <= 1.0 ||
+        parentWidth <= 1.0 || currentWidth < parentWidth * 0.65) {
+        return NO;
+    }
+
+    CGFloat deficit = parentHeight - currentHeight;
+    // Most subviews do not need a tab-bar lookup. Filter by geometry first.
+    if (deficit < 30.0 || deficit > parentHeight * 0.65) return NO;
+
+    CGFloat tabBarHeight = DYLiveFeedTabBarHeightForView(view);
+    CGFloat tolerance = MAX(1.0, tabBarHeight * 0.03);
+    if (!isfinite(tabBarHeight) || tabBarHeight < 30.0 ||
+        fabs(deficit - tabBarHeight) > tolerance) {
+        return NO;
+    }
+
+    incomingFrame->size.height = parentHeight;
+    DYLiveFeedLog([NSString stringWithFormat:
+        @"setFrame live-card player wrapper %@ height %.2f -> %.2f (parent %.2f, tab bar %.2f)",
+        NSStringFromClass(view.class), currentHeight, parentHeight, parentHeight, tabBarHeight]);
+    return YES;
 }
 
 static void DYLiveFeedApplyDYYYContentHeightRule(id playerController) {
@@ -227,6 +288,23 @@ static void DYLiveFeedCellLayoutSubviews(id self, SEL command) {
     }
 }
 
+static void DYLiveFeedViewSetFrame(id self, SEL command, CGRect frame) {
+    if (!DYLiveFeedOriginalViewSetFrame) return;
+
+    if (![NSThread isMainThread]) {
+        __weak UIView *weakView = [self isKindOfClass:UIView.class] ? (UIView *)self : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIView *strongView = weakView;
+            if (strongView) [strongView setFrame:frame];
+        });
+        return;
+    }
+
+    UIView *view = [self isKindOfClass:UIView.class] ? (UIView *)self : nil;
+    if (view) DYLiveFeedAdjustIncomingFrame(view, &frame);
+    ((void (*)(id, SEL, CGRect))DYLiveFeedOriginalViewSetFrame)(self, command, frame);
+}
+
 static void DYLiveFeedPlayerLayoutA(id self, SEL command) {
     if (DYLiveFeedOriginalPlayerLayoutA) {
         ((void (*)(id, SEL))DYLiveFeedOriginalPlayerLayoutA)(self, command);
@@ -252,6 +330,14 @@ static void DYLiveFeedPlayerLayoutB(id self, SEL command) {
 static void DYLiveFeedInstallHooks(void) {
     DYLiveFeedInstallAttempts++;
     BOOL allInstalled = YES;
+
+    if (!DYLiveFeedViewFrameHookInstalled) {
+        DYLiveFeedViewFrameHookInstalled = DYLiveFeedInstallInstanceHook(
+            UIView.class, @selector(setFrame:), (IMP)DYLiveFeedViewSetFrame,
+            &DYLiveFeedOriginalViewSetFrame);
+        if (DYLiveFeedViewFrameHookInstalled) DYLiveFeedLog(@"hooked scoped UIView -setFrame: for live-feed player wrappers");
+        allInstalled &= DYLiveFeedViewFrameHookInstalled;
+    }
 
     if (!DYLiveFeedCellHookInstalled) {
         Class cls = NSClassFromString(DYLiveFeedCellClassName);
