@@ -17,5 +17,7 @@
 
 - (void)processLiveFeedView:(UIView *)view;
 
+- (void)installHooksIfNeeded;
+
 
 @end
