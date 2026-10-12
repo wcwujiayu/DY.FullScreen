@@ -49,36 +49,6 @@ static BOOL DYFSLiveCardSubtreeHasContent(UIView *view, NSUInteger depth) {
     return NO;
 }
 
-// 信息流直播卡片里的账号、文案与「进入直播间」按钮不需要居中，
-// 而是应该停在底栏上方：把底部越过底栏的内容视图上移回去。
-// fullHeight 用卡片（cell）的高度而不是观众视图自身高度，
-// 因为观众视图可能尚未被撑满。
-static void DYFSKeepLiveCardContentAboveTabBar(UIView *container, CGFloat tabBarHeight, CGFloat fullHeight) {
-    if (!container || tabBarHeight <= 0 || fullHeight <= 0) return;
-    CGFloat limitY = fullHeight - tabBarHeight;
-    if (limitY <= 0) return;
-
-    CGFloat cw = CGRectGetWidth(container.bounds);
-    CGFloat ch = CGRectGetHeight(container.bounds);
-
-    for (UIView *sub in [container.subviews copy]) {
-        if (sub.hidden || sub.alpha <= 0.01) continue;
-
-        CGFloat sw = CGRectGetWidth(sub.frame), sh = CGRectGetHeight(sub.frame);
-        // 铺满容器的多半是视频层或背景层，不参与上移。
-        if (cw > 0 && ch > 0 && sw >= cw * 0.95 && sh >= ch * 0.90) continue;
-        if (!DYFSLiveCardSubtreeHasContent(sub, 0)) continue;
-
-        CGFloat delta = CGRectGetMaxY(sub.frame) - limitY;
-        if (delta <= 1.0) continue;
-
-        CGRect frame = sub.frame;
-        frame.origin.y -= delta;
-        if (CGRectGetMinY(frame) < -1.0) continue;   // 别把它顶出屏幕外
-        sub.frame = frame;
-    }
-}
-
 static BOOL DYFSIsPreStreamView(UIView *view) {
     for (UIView *cursor = view; cursor; cursor = cursor.superview) {
         NSString *name = NSStringFromClass(cursor.class);
