@@ -9,6 +9,7 @@
 #import "DYLiveFeedFullscreen.h"
 #import <objc/runtime.h>
 #import <math.h>
+#import <stdlib.h>
 
 static NSString * const DYLiveFeedCellClassName = @"IESLiveInnerFeedLiveRoomCell";
 static NSString * const DYLiveFeedPlayerClassA = @"AWEDPlayerFeedPlayerViewController";
@@ -178,7 +179,7 @@ static Method DYLiveFeedOwnInstanceMethod(Class cls, SEL selector) {
     Method *methods = class_copyMethodList(cls, &count);
     Method found = NULL;
     for (unsigned int index = 0; index < count; index++) {
-        if (method_getName(methods[index]) == selector) {
+        if (sel_isEqual(method_getName(methods[index]), selector)) {
             found = methods[index];
             break;
         }
@@ -231,7 +232,9 @@ static void DYLiveFeedPlayerLayoutA(id self, SEL command) {
         ((void (*)(id, SEL))DYLiveFeedOriginalPlayerLayoutA)(self, command);
     }
     if ([self isKindOfClass:UIViewController.class]) {
-        [[DYLiveFeedFullscreen sharedInstance] processLiveFeedView:((UIViewController *)self).view];
+        UIView *root = ((UIViewController *)self).view;
+        DYLiveFeedApplyDYYYContentHeightRule(self);
+        [[DYLiveFeedFullscreen sharedInstance] processLiveFeedView:root];
     }
 }
 
@@ -240,7 +243,9 @@ static void DYLiveFeedPlayerLayoutB(id self, SEL command) {
         ((void (*)(id, SEL))DYLiveFeedOriginalPlayerLayoutB)(self, command);
     }
     if ([self isKindOfClass:UIViewController.class]) {
-        [[DYLiveFeedFullscreen sharedInstance] processLiveFeedView:((UIViewController *)self).view];
+        UIView *root = ((UIViewController *)self).view;
+        DYLiveFeedApplyDYYYContentHeightRule(self);
+        [[DYLiveFeedFullscreen sharedInstance] processLiveFeedView:root];
     }
 }
 
