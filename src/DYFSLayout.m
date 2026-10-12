@@ -19,6 +19,7 @@ static IMP DYFSOriginalInteractionControllerLayout = NULL;
 static IMP DYFSOriginalPlayerContentA = NULL;
 static IMP DYFSOriginalPlayerContentB = NULL;
 static IMP DYFSOriginalPlayerContentC = NULL;
+static IMP DYFSOriginalSetFrame = NULL;
 
 // Associated-object keys used to settle player geometry without looping.
 // 等父容器尺寸稳定后再匹配高度，避免与原生布局互相触发
@@ -274,6 +275,56 @@ void DYFSPlayerContentLayoutC(id self, SEL cmd) {
 }
 
 
+
+// ---------------------------------------------------------------------------
+// 复刻 DYYY 的兜底机制：全局拦截 -setFrame:。
+//
+// 信息流里的直播卡片并不走 AWE 的播放器控制器层级，靠 hook cell 去搬动视图
+// 只会把视频推离原位。DYYY 的做法是在 -setFrame: 上统一兜底：凡是属于播放器
+// 控制器的视图，只要新高度比父视图"恰好差一个底栏"，就把高度补齐到父视图，
+// 且完全不动 origin —— 视频与文案都停在原位，只是下方不再留黑边。
+// ---------------------------------------------------------------------------
+static BOOL DYFSIsPlayerViewController(UIViewController *vc) {
+    if (!vc) return NO;
+    static Class playClassA, playClassB, playClassC;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        playClassA = NSClassFromString(kDYFSClassPlayVideoA);
+        playClassB = NSClassFromString(kDYFSClassPlayVideoB);
+        playClassC = NSClassFromString(kDYFSClassPlayVideoC);
+    });
+    return (playClassA && [vc isKindOfClass:playClassA]) ||
+           (playClassB && [vc isKindOfClass:playClassB]) ||
+           (playClassC && [vc isKindOfClass:playClassC]);
+}
+
+static void DYFSUIViewSetFrame(id self, SEL cmd, CGRect frame) {
+    if (!DYFSOriginalSetFrame) return;
+
+    if (DYFSIsEnabled() && [self isKindOfClass:UIView.class]) {
+        UIView *view = (UIView *)self;
+        UIView *superview = view.superview;
+        CGFloat superH = CGRectGetHeight(superview.frame);
+        CGFloat height = CGRectGetHeight(frame);
+
+        // 先做最便宜的几何判断，避免每次 setFrame 都回溯响应链。
+        // 与 DYYY 一致：只处理没有位移、且高度差刚好一个底栏的情况。
+        if (superview && superH > 0 && height > 0 && height < superH &&
+            frame.origin.x == 0 && frame.origin.y == 0) {
+            CGFloat diff = superH - height;
+            CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
+            if (tabBarHeight > 0 && fabs(diff - tabBarHeight) < 1.0) {
+                UIViewController *vc = DYFSFindViewController(view);
+                if (DYFSIsPlayerViewController(vc)) {
+                    frame.size.height = superH;   // 只补高度，origin 不动
+                }
+            }
+        }
+    }
+
+    ((void (*)(id, SEL, CGRect))DYFSOriginalSetFrame)(self, cmd, frame);
+}
+
 void DYFSLayoutInstallHooks(void) {
     Class cls = NSClassFromString(kDYFSClassFeedTableView);
     if (!DYFSInstalledFeed && cls) {
@@ -309,5 +360,12 @@ void DYFSLayoutInstallHooks(void) {
     if (!DYFSInstalledPlayerContentC && cls) {
         DYFSInstalledPlayerContentC = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
                     (IMP)DYFSPlayerContentLayoutC, &DYFSOriginalPlayerContentC);
+    }
+
+    // 全局兜底：装在 UIView 上，覆盖信息流直播卡片这类不走播放器层级的内容。
+    static BOOL installedSetFrame = NO;
+    if (!installedSetFrame) {
+        installedSetFrame = DYFSInstallHook(UIView.class, @selector(setFrame:),
+                                            (IMP)DYFSUIViewSetFrame, &DYFSOriginalSetFrame);
     }
 }

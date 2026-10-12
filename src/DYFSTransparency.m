@@ -135,9 +135,13 @@ static void DYFSHideOverlappingChrome(UIView *anchor, UIView *root) {
 #pragma mark - 目标定位
 
 // 视频底部的信息 / 评论 dock：宽、矮、贴底（对应「我-作品」「我-喜欢」的底栏）
-static UIView *DYFSFindBottomDock(UIView *root) {
-    CGFloat rootW = CGRectGetWidth(root.bounds), rootH = CGRectGetHeight(root.bounds);
-    if (rootW < 100.0 || rootH < 200.0) return nil;
+// reference 传窗口：root 常常是整张 feed 列表（高度可达数千），
+// 用它自己的坐标系算「距离底部」会让所有候选都被过滤掉，这是之前完全没效果的原因。
+static UIView *DYFSFindBottomDock(UIView *root, UIView *reference) {
+    if (!root) return nil;
+    UIView *ref = reference ?: root;
+    CGFloat refW = CGRectGetWidth(ref.bounds), refH = CGRectGetHeight(ref.bounds);
+    if (refW < 100.0 || refH < 200.0) return nil;
 
     UIView *best = nil;
     CGFloat bestScore = -CGFLOAT_MAX;
@@ -148,12 +152,12 @@ static UIView *DYFSFindBottomDock(UIView *root) {
         [pending addObjectsFromArray:view.subviews];
         if (view.hidden || view.alpha <= 0.01) continue;
 
-        CGRect rect = [view convertRect:view.bounds toView:root];
+        CGRect rect = [view convertRect:view.bounds toView:ref];
         CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
-        CGFloat bottomGap = rootH - CGRectGetMaxY(rect);
-        if (w < rootW * 0.7 || h < 36.0 || h > 170.0 || bottomGap < -6.0 || bottomGap > 200.0) continue;
+        CGFloat bottomGap = refH - CGRectGetMaxY(rect);
+        if (w < refW * 0.7 || h < 36.0 || h > 170.0 || bottomGap < -6.0 || bottomGap > 200.0) continue;
 
-        CGFloat score = w / MAX(1.0, rootW) * 3.0 - fabs(h - 60.0) / 100.0 - fabs(bottomGap) / 200.0;
+        CGFloat score = w / MAX(1.0, refW) * 3.0 - fabs(h - 60.0) / 100.0 - fabs(bottomGap) / 200.0;
         if (score > bestScore) { bestScore = score; best = view; }
     }
     return best;
@@ -168,9 +172,11 @@ static BOOL DYFSIsSearchPillText(NSString *text) {
 }
 
 // 「相关搜索」/「合集」胶囊卡片：先按文字定位 label，再向上找尺寸合理的卡片容器
-static void DYFSApplyCardTransparency(UIView *root) {
-    CGFloat rootW = CGRectGetWidth(root.bounds), rootH = CGRectGetHeight(root.bounds);
-    if (rootW < 100.0 || rootH < 160.0) return;
+static void DYFSApplyCardTransparency(UIView *root, UIView *reference) {
+    if (!root) return;
+    UIView *ref = reference ?: root;
+    CGFloat refW = CGRectGetWidth(ref.bounds), refH = CGRectGetHeight(ref.bounds);
+    if (refW < 100.0 || refH < 160.0) return;
 
     NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
     while (pending.count > 0) {
@@ -182,14 +188,14 @@ static void DYFSApplyCardTransparency(UIView *root) {
         if (!DYFSIsSearchPillText(DYFSTextForView(view))) continue;
 
         for (UIView *candidate = view.superview; candidate && candidate != root; candidate = candidate.superview) {
-            CGRect rect = [candidate convertRect:candidate.bounds toView:root];
+            CGRect rect = [candidate convertRect:candidate.bounds toView:ref];
             CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
             CGFloat minY = CGRectGetMinY(rect);
-            if (w < MAX(80.0, rootW * 0.25) || w > rootW * 1.01) continue;
-            if (h < 22.0 || h > 220.0 || minY < rootH * 0.1) continue;
+            if (w < MAX(80.0, refW * 0.25) || w > refW * 1.01) continue;
+            if (h < 22.0 || h > 220.0 || minY < 0) continue;
 
             DYFSClearChromeTree(candidate, 0);
-            DYFSHideOverlappingChrome(candidate, root);
+            DYFSHideOverlappingChrome(candidate, ref);
             break;
         }
     }
@@ -202,10 +208,15 @@ void DYFSTransparencyApplyInView(UIView *root) {
     // 直播间与开播预览保持抖音原生外观，不做透明化。
     if (DYFSIsActualLiveRoomContext(root) || DYFSIsLivePreStreamContext(root)) return;
 
-    UIView *dock = DYFSFindBottomDock(root);
+    // 「贴底」必须以窗口为参照：root 往往是整张 feed 列表，高度可达数千。
+    UIWindow *window = root.window;
+    if (!window) window = UIApplication.sharedApplication.windows.firstObject;
+    UIView *reference = window ?: root;
+
+    UIView *dock = DYFSFindBottomDock(root, reference);
     if (dock) {
         DYFSClearChromeTree(dock, 0);
-        DYFSHideOverlappingChrome(dock, root);
+        DYFSHideOverlappingChrome(dock, reference);
     }
-    DYFSApplyCardTransparency(root);
+    DYFSApplyCardTransparency(root, reference);
 }

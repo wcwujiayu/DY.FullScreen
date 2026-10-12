@@ -15,7 +15,6 @@
 #import "DYFSLayout.h"
 #import "DYFSChrome.h"
 #import "DYFSSettings.h"
-#import "DYLiveFeedFullscreen.h"
 
 // 启动后两次重排：第一次消化初始布局，第二次修正延迟加载的视图
 static const NSTimeInterval kDYFSStartupRelayoutDelayA = 0.20;
@@ -24,10 +23,6 @@ static const NSTimeInterval kDYFSStartupRelayoutDelayB = 0.65;
 static void DYFSInstallHooks(void) {
     NSString *bundle = NSBundle.mainBundle.bundleIdentifier ?: @"";
     if (![bundle isEqualToString:DYFSBundleID]) return;
-
-    // The feed live-cell class may become available after initial +load.
-    // Keep installation idempotent and retry alongside the existing hook pass.
-    [[DYLiveFeedFullscreen sharedInstance] installHooksIfNeeded];
 
     DYFSLayoutInstallHooks();
     DYFSChromeInstallHooks();
