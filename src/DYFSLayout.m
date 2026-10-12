@@ -9,6 +9,7 @@
 #import "DYFSLayout.h"
 #import "DYFSCommon.h"
 #import "DYFSContext.h"
+#import "DYFSTransparency.h"
 #import <objc/message.h>
 #import <math.h>
 
@@ -113,6 +114,8 @@ void DYFSInteractionControllerLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
     UIViewController *controller = (UIViewController *)self;
     UIView *view = controller.view;
+    DYFSTransparencyApplyInView(view);
+    if (view && view.superview) DYFSTransparencyApplyInView(view.superview);
     if (!view || !view.superview || DYFSInProfileContext(view) || DYFSIsActualLiveRoomContext(view) || DYFSIsLivePreStreamContext(view) || DYFSIsLivePreStreamPlayer(controller)) return;
     if (!DYFSIsFeedCellInteractionController(controller)) return;
 
@@ -247,6 +250,11 @@ static void DYFSSchedulePlayerContentHeight(id playerController) {
 
 static void DYFSPlayerContentLayoutCommon(id self, SEL cmd, IMP original) {
     if (original) ((void (*)(id, SEL))original)(self, cmd);
+    // 透明化不依赖尺寸匹配：个人主页（我-作品 / 我-喜欢）不参与高度修正，
+    // 但底栏与「相关搜索」/「合集」卡片仍需要透明。
+    UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
+    DYFSTransparencyApplyInView(root);
+    if (root.superview) DYFSTransparencyApplyInView(root.superview);
     DYFSSchedulePlayerContentHeight(self);
 }
 

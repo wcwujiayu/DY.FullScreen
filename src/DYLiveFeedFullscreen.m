@@ -13,6 +13,21 @@
 #import <objc/message.h>
 
 static IMP DYFSOriginalLiveFeedCellLayout = NULL;
+
+// DYYY 也实现了信息流直播卡片的布局调整。检测到 DYYY 注入时本模块完全不参与，
+// 避免 DYYY 的布局协调器与我们重复撑满造成的文案 / 按钮错位。
+static BOOL DYFSIsDYYPLoaded(void) {
+    static dispatch_once_t onceToken;
+    static BOOL present = NO;
+    dispatch_once(&onceToken, ^{
+        present = NSClassFromString(@"DYYYManager") != nil ||
+                  NSClassFromString(@"DYYYHookManager") != nil ||
+                  NSClassFromString(@"DYYYSettingsHelper") != nil ||
+                  NSClassFromString(@"DYYYSettingViewController") != nil;
+        if (present) NSLog(@"[DY.FullScreen] DYYY detected; live-feed adjustments disabled");
+    });
+    return present;
+}
 static BOOL DYFSInstalledLiveFeedCellLayout = NO;
 
 static BOOL DYFSIsPreStreamView(UIView *view) {
@@ -57,6 +72,7 @@ static BOOL DYFSIsPreStreamView(UIView *view) {
 }
 
 - (void)processLiveFeedView:(UIView *)view {
+    if (DYFSIsDYYPLoaded()) return;
     if (![self isLiveFeedView:view]) return;
 
     UIView *cell = view;
@@ -89,6 +105,7 @@ static BOOL DYFSIsPreStreamView(UIView *view) {
 }
 
 - (void)installHooksIfNeeded {
+    if (DYFSIsDYYPLoaded()) return;
     if (DYFSInstalledLiveFeedCellLayout) return;
     Class cls = NSClassFromString(kDYFSClassLiveFeedCell);
     SEL selector = @selector(layoutSubviews);

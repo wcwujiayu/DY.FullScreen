@@ -28,7 +28,7 @@ INSTALL_TARGET_PROCESSES = Aweme
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = DY.FullScreen
-DY.FullScreen_FILES = src/Tweak.m src/DYFSCommon.m src/DYFSContext.m src/DYFSLayout.m src/DYFSChrome.m src/DYFSSettings.m src/DYLiveFeedFullscreen.m
+DY.FullScreen_FILES = src/Tweak.m src/DYFSCommon.m src/DYFSContext.m src/DYFSLayout.m src/DYFSChrome.m src/DYFSSettings.m src/DYFSTransparency.m src/DYLiveFeedFullscreen.m
 DY.FullScreen_CFLAGS = -fobjc-arc -Wall -Wextra -Wno-unused-parameter
 DY.FullScreen_FRAMEWORKS = UIKit Foundation QuartzCore
 
