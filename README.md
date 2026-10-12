@@ -11,6 +11,8 @@
 
 预期文件包括三种 .deb、`DY.FullScreen_0.3.17.dylib`、`DY.FullScreen.dylib`、`DY.FullScreen-TrollFools-0.3.17.zip` 和 `SHA256SUMS.txt`。版本标签（例如 `v0.3.17`）用于触发 GitHub Release 发布流程。
 
+请以本次 Actions 运行生成的 0.3.17 文件为准，不要继续注入先前 0.3.16 的工件。
+
 ## 安装与测试
 
 1. 从 Actions Artifacts 下载构建包并解压。
