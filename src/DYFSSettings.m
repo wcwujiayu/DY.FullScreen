@@ -41,6 +41,9 @@ static NSString *DYFSStatusText(void) {
         DYFSVersionMismatch ? @"不一致，布局可能异常" : @"一致"];
 }
 
+// Forward declaration: DYFSSettingsActionTarget below calls into it.
+static void DYFSOpenSettings(id sender);
+
 @interface DYFSSettingsActionTarget : NSObject
 + (instancetype)sharedTarget;
 - (void)openSettings:(id)sender;
