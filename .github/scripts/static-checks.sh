@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# DY.FullScreen 静态检查
+#
+# 在 CI 中于构建之前运行（ubuntu runner，不需要 Theos / Xcode）。
+# 检查项均为"防止回归"性质：版本来源唯一、模块不重新膨胀、
+# 已移除的功能不复活、文案一致、模块划分完整。
+#
+# 用法：bash .github/scripts/static-checks.sh
+
+set -uo pipefail
+
+fail=0
+ok()   { printf '  OK    %s\n' "$*"; }
+bad()  { printf '  FAIL  %s\n' "$*"; fail=1; }
+
+echo "== 1. 版本号唯一来源 =="
+version="$(awk '/^Version:/ {print $2; exit}' control)"
+if [ -z "$version" ]; then
+  bad "无法从 control 读取 Version"
+else
+  ok "control 版本: $version"
+fi
+if [ -f .github/workflows/build.yml ] && grep -qE '_[0-9]+\.[0-9]+\.[0-9]+_' .github/workflows/build.yml; then
+  bad "build.yml 出现硬编码版本号，应从 control 动态读取"
+else
+  ok "build.yml 未硬编码版本号"
+fi
+
+echo "== 2. 模块体量（防回归到单文件巨石）=="
+limit=450
+for f in src/*.m; do
+  n=$(wc -l < "$f" | tr -d ' ')
+  if [ "$n" -gt "$limit" ]; then
+    bad "$f 共 $n 行，超过上限 $limit"
+  else
+    ok "$(basename "$f") $n 行"
+  fi
+done
+total=$(cat src/*.m | wc -l | tr -d ' ')
+ok "源码总行数: $total"
+
+echo "== 3. 已移除功能不得复活 =="
+removed=(
+  "DYFSApplyRecommendationTransparencyInView"
+  "DYFSApplyVideoDetailBottomTransparencyInView"
+  "DYFSNativeSettingsCellForRow"
+  "DYFSFindLabelWithText"
+  "DYFSClearSmallCardChrome"
+  "DYFSCommentPanelLayout"
+)
+for sym in "${removed[@]}"; do
+  if grep -rq "$sym" src/; then
+    bad "已移除的标识符重新出现: $sym"
+  fi
+done
+[ $fail -eq 0 ] && ok "已移除的 ${#removed[@]} 个标识符均未复活"
+
+echo "== 4. 文案一致性 =="
+if grep -rq "胖胖专属" src/ README.md; then
+  bad "残留占位文案『胖胖专属』"
+else
+  ok "无残留占位文案"
+fi
+if grep -q "启用全屏" src/DYFSCommon.m; then
+  ok "设置项标题: 启用全屏"
+else
+  bad "未找到设置项标题常量"
+fi
+
+echo "== 5. 模块划分完整性 =="
+for mod in DYFSCommon DYFSContext DYFSLayout DYFSChrome DYFSSettings; do
+  if [ -f "src/$mod.h" ] && [ -f "src/$mod.m" ]; then
+    ok "$mod.h / $mod.m 成对存在"
+  else
+    bad "$mod 缺少 .h 或 .m"
+  fi
+done
+if grep -q "DYFSLayoutInstallHooks\|DYFSChromeInstallHooks\|DYFSSettingsInstallHooks" src/Tweak.m; then
+  ok "入口仅调度各模块的安装函数"
+else
+  bad "Tweak.m 未通过模块安装函数调度"
+fi
+if grep -qE '^\s*Class cls = NSClassFromString' src/Tweak.m; then
+  bad "Tweak.m 仍在直接安装 hook，应下沉到各模块"
+else
+  ok "Tweak.m 不含直接 hook 安装代码"
+fi
+
+echo "== 6. 编译所需文件均被 Makefile 收录 =="
+for f in src/*.m; do
+  if grep -q "$(basename "$f")" Makefile; then
+    ok "$(basename "$f") 已在 Makefile 中"
+  else
+    bad "$(basename "$f") 未加入 Makefile FILES"
+  fi
+done
+
+echo
+if [ $fail -eq 0 ]; then
+  echo "静态检查全部通过"
+else
+  echo "静态检查未通过"
+fi
+exit $fail
