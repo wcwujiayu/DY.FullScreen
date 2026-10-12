@@ -9,6 +9,15 @@
 @implementation DYLiveFeedFullscreen
 
 
+// 模块加载测试
++ (void)load {
+
+    NSLog(@"DYLiveFeedFullscreen loaded");
+
+}
+
+
+
 + (instancetype)sharedInstance {
 
     static DYLiveFeedFullscreen *manager;
