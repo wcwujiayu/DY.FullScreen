@@ -2,7 +2,7 @@ name: Build DY.FullScreen
 
 on:
   push:
-    branches: [main, dev/live-feed-fullscreen-0.3.17]
+    branches: [main, dev/live-feed-fullscreen-0.3.16]
     tags: ['v*']
   workflow_dispatch:
 
