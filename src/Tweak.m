@@ -63,7 +63,7 @@ static void DYFSScheduleHooks(void) {
         }
 
         if ((!layoutInstalled || !sidebarInstalled || !tabBarInstalled || !DYFSInstalledNativeSettingsSwitch ||
-             !playerLayoutInstalled) && DYFSInstallAttempts < kDYFSMaxInstallAttempts) {
+             !sizingInstalled) && DYFSInstallAttempts < kDYFSMaxInstallAttempts) {
             DYFSScheduleHooks();
             return;
         }
