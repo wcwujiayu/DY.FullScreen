@@ -3,13 +3,13 @@
 用于调整DY UI 的 Theos/Logos Tweak，仅在 **40.7.0** 中测试。  
 **仅供学习交流，禁止用于商业用途。**
 
-> 实验版本 0.3.16。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。原生设置项主标题为“首页全屏”，下方副标题为“胖胖专属”。本版本保留 0.3.15 已有的普通视频、图集、个人主页、喜欢/收藏页面及卡片透明处理逻辑，不重写原全屏算法；新增独立的直播信息流模块，参考 DYYY 当前源码中 `AWEDPlayerFeedPlayerViewController` 与 `AWEDPlayerViewController_Merge` 对 `contentView` 高度差进行匹配的布局规则，仅在视图层级确认包含 `IESLiveInnerFeedLiveRoomCell` 时尝试调整播放器内容高度。正式直播间不处于该信息流单元层级时不会被此模块处理。直播卡片行为仍需在抖音 40.7.0 真机验证；如果该版本使用不同的播放器类或层级，模块会保守跳过，而不会扩大成全局播放器 Hook。
+> 实验版本 0.3.17。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。原生设置项主标题为“首页全屏”，下方副标题为“胖胖专属”。本版本保留 0.3.15 已有的普通视频、图集、个人主页、喜欢/收藏页面及卡片透明处理逻辑，不重写原全屏算法；新增独立的直播信息流模块，移植 DYYY 对播放器 `contentView` 布局及 `UIView setFrame:` 阶段的高度修正规则；新增的 frame 修正仅在播放器视图层级能确认包含 `IESLiveInnerFeedLiveRoomCell` 时触发，不改 `Tweak.m` 中既有的普通视频全屏算法。正式直播间不处于该信息流单元层级时不会被此模块处理。直播卡片行为仍需在抖音 40.7.0 真机验证；如果该版本使用不同的播放器类或层级，模块会保守跳过，而不会扩大成全局播放器 Hook。
 
 ## 自动构建
 
 仓库使用 Theos/Logos 构建流程，生成 rootful、rootless、roothide 三种 Debian 包，以及 TrollFools 使用的动态库。推送到 `main` 或本次开发分支后查看仓库 Actions 页面中的构建任务；成功后在该次运行记录底部 Artifacts 下载构建结果。
 
-预期文件包括三种 .deb、`DY.FullScreen_0.3.16.dylib`、`DY.FullScreen.dylib`、`DY.FullScreen-TrollFools-0.3.16.zip` 和 `SHA256SUMS.txt`。版本标签（例如 `v0.3.16`）用于触发 GitHub Release 发布流程。
+预期文件包括三种 .deb、`DY.FullScreen_0.3.17.dylib`、`DY.FullScreen.dylib`、`DY.FullScreen-TrollFools-0.3.17.zip` 和 `SHA256SUMS.txt`。版本标签（例如 `v0.3.17`）用于触发 GitHub Release 发布流程。
 
 ## 安装与测试
 
