@@ -335,16 +335,16 @@ static void DYFSOpenSettings(id sender);
 @implementation DYFSSettingsViewController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"胖胖专属";
+    self.title = @"首页全屏";
     self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
 
     UILabel *titleLabel = [[UILabel alloc] init];
-    titleLabel.text = @"胖胖专属";
+    titleLabel.text = @"首页全屏";
     titleLabel.font = [UIFont boldSystemFontOfSize:24];
     titleLabel.textColor = UIColor.labelColor;
 
     UILabel *descriptionLabel = [[UILabel alloc] init];
-    descriptionLabel.text = @"首页视频与图集全屏、底栏透明设置。适配抖音 40.7.0。";
+    descriptionLabel.text = @"胖胖专属";
     descriptionLabel.font = [UIFont systemFontOfSize:14];
     descriptionLabel.textColor = UIColor.secondaryLabelColor;
     descriptionLabel.numberOfLines = 0;
@@ -873,20 +873,56 @@ static BOOL DYFSIsDetailVideoContext(UIView *view) {
     return NO;
 }
 
+// DYYY's live-feed model signals: isLive, cellRoom, or the native "直播中" tag.
+// Resolve selectors dynamically so this remains compatible with app-private headers.
+static BOOL DYFSModelHasLiveSignal(id model) {
+    if (!model) return NO;
+    @try {
+        SEL isLiveSelector = NSSelectorFromString(@"isLive");
+        if ([model respondsToSelector:isLiveSelector] &&
+            ((BOOL (*)(id, SEL))objc_msgSend)(model, isLiveSelector)) {
+            return YES;
+        }
+        SEL cellRoomSelector = NSSelectorFromString(@"cellRoom");
+        if ([model respondsToSelector:cellRoomSelector] &&
+            ((id (*)(id, SEL))objc_msgSend)(model, cellRoomSelector) != nil) {
+            return YES;
+        }
+        SEL feedTagSelector = NSSelectorFromString(@"videoFeedTag");
+        if ([model respondsToSelector:feedTagSelector]) {
+            id tag = ((id (*)(id, SEL))objc_msgSend)(model, feedTagSelector);
+            if ([tag isKindOfClass:NSString.class] && [tag isEqualToString:@"直播中"]) {
+                return YES;
+            }
+        }
+    } @catch (__unused NSException *exception) {
+        return NO;
+    }
+    return NO;
+}
+
 static BOOL DYFSIsFeedCellInteractionController(UIViewController *controller) {
     if (!controller) return NO;
 
     id base = DYFSSafeValueForKey(controller, @"awemeBaseViewController");
     NSString *baseName = base ? NSStringFromClass([base class]) : @"";
     if ([baseName containsString:@"AWEFeedCellViewController"]) return YES;
-    if (base) return NO;
+
+    // Some live cards wrap the interaction controller in a different base class.
+    // Keep the fallback restricted to an attached feed interaction controller;
+    // the caller separately excludes profile, pre-stream and actual live-room contexts.
+    id model = DYFSSafeValueForKey(base, @"model");
+    if (!model) model = DYFSSafeValueForKey(controller, @"model");
+    BOOL hasLiveSignal = DYFSModelHasLiveSignal(model);
 
     UIViewController *cursor = controller.parentViewController;
     for (NSUInteger depth = 0; cursor && depth < 12; depth++, cursor = cursor.parentViewController) {
         NSString *name = NSStringFromClass(cursor.class);
         if ([name containsString:@"AWEFeedCellViewController"]) return YES;
     }
-    return NO;
+
+    return hasLiveSignal && controller.isViewLoaded && controller.view.window != nil &&
+        controller.view.superview != nil;
 }
 
 // Ordinary video posts and photo carousels use different player wrappers and
