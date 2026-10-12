@@ -9,6 +9,7 @@
 #import "DYFSChrome.h"
 #import "DYFSCommon.h"
 #import "DYFSContext.h"
+#import "DYFSLayout.h"
 #import <objc/message.h>
 
 static IMP DYFSOriginalTabBarLayout = NULL;
@@ -20,6 +21,88 @@ static IMP DYFSOriginalPlayerProgressLayout = NULL;
 
 // Collapses repeated transparency requests within one main-queue turn.
 static BOOL DYFSTabBarTransparencyScheduled = NO;
+
+static IMP DYFSOriginalLiveCellLayout = NULL;
+static BOOL DYFSInstalledLiveCard = NO;
+
+
+// ---------------------------------------------------------------------------
+// 信息流直播卡片：只把账号 / 文案 / 按钮顶到底栏上方，视频层完全不动。
+//
+// 视频所在的视图是铺满且无文字无控件的，遇到它就继续下钻；
+// 只有"下游含文字或控件"的容器才会被上移，且上移量按窗口坐标计算，
+// 因此不会把视频推离原位。
+// ---------------------------------------------------------------------------
+static BOOL DYFSLiveCardSubtreeHasContent(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+    if ([view isKindOfClass:UIControl.class] || [view isKindOfClass:UIButton.class] ||
+        [view isKindOfClass:UITextField.class]) return YES;
+    if ([view isKindOfClass:UILabel.class]) {
+        UILabel *label = (UILabel *)view;
+        if (label.text.length > 0 || label.attributedText.length > 0) return YES;
+    }
+    for (UIView *sub in view.subviews) {
+        if (DYFSLiveCardSubtreeHasContent(sub, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+static void DYFSLiftLiveCardContent(UIView *container, UIView *reference, CGFloat limitY) {
+    if (!container || !reference) return;
+    CGFloat w = CGRectGetWidth(container.bounds), h = CGRectGetHeight(container.bounds);
+
+    for (UIView *sub in [container.subviews copy]) {
+        if (sub.hidden || sub.alpha <= 0.01) continue;
+
+        CGFloat sw = CGRectGetWidth(sub.frame), sh = CGRectGetHeight(sub.frame);
+        BOOL fills = w > 0 && h > 0 && sw >= w * 0.95 && sh >= h * 0.90;
+        if (fills) {                                   // 视频层 / 背景层：继续下钻
+            DYFSLiftLiveCardContent(sub, reference, limitY);
+            continue;
+        }
+        if (!DYFSLiveCardSubtreeHasContent(sub, 0)) continue;   // 纯背景：不动
+
+        CGRect rect = [sub convertRect:sub.bounds toView:reference];
+        CGFloat delta = CGRectGetMaxY(rect) - limitY;
+        if (delta <= 1.0) continue;
+
+        CGRect frame = sub.frame;
+        frame.origin.y -= delta;
+        if (CGRectGetMinY(frame) < -1.0) continue;     // 别顶出屏幕
+        sub.frame = frame;
+    }
+}
+
+static void DYFSLiveCellLayout(id self, SEL cmd) {
+    if (DYFSOriginalLiveCellLayout) ((void (*)(id, SEL))DYFSOriginalLiveCellLayout)(self, cmd);
+    if (!DYFSIsEnabled()) return;
+
+    UIView *cell = (UIView *)self;
+    if (!cell.window) return;
+    if (DYFSIsActualLiveRoomContext(cell) || DYFSIsLivePreStreamContext(cell)) return;
+
+    id audience = nil;
+    @try {
+        SEL selector = NSSelectorFromString(@"audienceVC");
+        if ([cell respondsToSelector:selector]) {
+            audience = ((id (*)(id, SEL))objc_msgSend)(cell, selector);
+        }
+        if (!audience) audience = DYFSSafeValueForKey(cell, @"audienceVC");
+    } @catch (__unused NSException *exception) {
+        return;
+    }
+    if (![audience isKindOfClass:UIViewController.class]) return;
+
+    UIView *content = ((UIViewController *)audience).view;
+    if (!content || !content.window) return;
+
+    CGFloat windowHeight = CGRectGetHeight(cell.window.bounds);
+    CGFloat tabBarHeight = DYFSBottomTabBarHeight(cell);
+    CGFloat limitY = windowHeight - tabBarHeight;
+    if (limitY <= 0) return;
+
+    DYFSLiftLiveCardContent(content, cell.window, limitY);
+}
 
 static BOOL DYFSIsTabBarControl(UIView *view, Class generalButtonClass, Class plusButtonClass) {
     if (!view) return NO;
@@ -223,5 +306,11 @@ void DYFSChromeInstallHooks(void) {
     if (cls && !DYFSInstalledTabBarDidAddSubview) {
         DYFSInstalledTabBarDidAddSubview = DYFSInstallHook(cls, @selector(didAddSubview:),
                     (IMP)DYFSTabBarDidAddSubview, &DYFSOriginalTabBarDidAddSubview);
+    }
+
+    cls = NSClassFromString(kDYFSClassLiveFeedCell);
+    if (cls && !DYFSInstalledLiveCard) {
+        DYFSInstalledLiveCard = DYFSInstallHook(cls, @selector(layoutSubviews),
+                    (IMP)DYFSLiveCellLayout, &DYFSOriginalLiveCellLayout);
     }
 }

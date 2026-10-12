@@ -132,6 +132,50 @@ static void DYFSHideOverlappingChrome(UIView *anchor, UIView *root) {
     }
 }
 
+
+// DYYY 同款思路（DYYY.xm 15982）：贴底、深色纯背景的视图直接隐藏。
+// 之前只清 backgroundColor，对毛玻璃和重新绘制的背景无效，
+// 这里补一条按视觉特征处理的兜底路径。
+static BOOL DYFSIsDarkBackgroundView(UIView *view) {
+    UIColor *color = view.backgroundColor;
+    if (!color) return NO;
+    CGFloat r = 0, g = 0, b = 0, a = 0, white = 0;
+    BOOL ok = [color getRed:&r green:&g blue:&b alpha:&a];
+    if (!ok && [color getWhite:&white alpha:&a]) { r = g = b = white; ok = YES; }
+    if (!ok || a <= 0.01) return NO;
+    CGFloat luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    return luminance < 0.3;
+}
+
+static void DYFSHideDarkBottomChrome(UIView *root, UIView *reference) {
+    if (!root || !reference) return;
+    CGFloat refW = CGRectGetWidth(reference.bounds), refH = CGRectGetHeight(reference.bounds);
+    if (refW < 100.0 || refH < 200.0) return;
+    CGFloat limitY = refH * 0.72;          // 只处理底部区域
+
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
+    NSUInteger visited = 0;
+    while (pending.count > 0 && visited < 400) {
+        visited++;
+        UIView *view = pending.lastObject;
+        [pending removeLastObject];
+        [pending addObjectsFromArray:view.subviews];
+        if (view.hidden || view.alpha <= 0.01) continue;
+        // 有文字或有控件的容器一律保留，只清背景
+        if (DYFSSubtreeHasText(view, 0) || DYFSSubtreeHasControl(view, 0)) continue;
+
+        CGRect rect = [view convertRect:view.bounds toView:reference];
+        if (CGRectGetMinY(rect) < limitY) continue;
+        CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
+        if (w < refW * 0.5 || h < 20.0 || h > refH * 0.3) continue;
+
+        if (DYFSIsNamedChrome(view) || DYFSIsDarkBackgroundView(view) ||
+            [view isKindOfClass:UIVisualEffectView.class]) {
+            view.hidden = YES;
+        }
+    }
+}
+
 #pragma mark - 目标定位
 
 // 视频底部的信息 / 评论 dock：宽、矮、贴底（对应「我-作品」「我-喜欢」的底栏）
@@ -219,4 +263,6 @@ void DYFSTransparencyApplyInView(UIView *root) {
         DYFSHideOverlappingChrome(dock, reference);
     }
     DYFSApplyCardTransparency(root, reference);
+    // 兜底：单独存在的深色背景条（不成组的 pill 也能覆盖到）
+    DYFSHideDarkBottomChrome(root, reference);
 }

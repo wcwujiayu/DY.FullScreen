@@ -2,8 +2,10 @@
 //  DYFSLayout.m
 //  DY.FullScreen
 //
-//  Sizing corrections: expand the feed canvas and player content while keeping
-//  the interaction layer inside the usable area above the bottom tab bar.
+//  所有高度补偿统一收敛到全局 -setFrame: 兜底（pre 式）：
+//  在抖音把 frame 写进去之前就改好，视图第一次布局即为目标尺寸，
+//  不再有"先按旧高度渲染一帧再被拉高"的启动跳动。
+//  layoutSubviews hook 只保留透明化触发职责。
 //
 
 #import "DYFSLayout.h"
@@ -16,18 +18,7 @@
 static IMP DYFSOriginalFeedLayout = NULL;
 static IMP DYFSOriginalStoryLayout = NULL;
 static IMP DYFSOriginalInteractionControllerLayout = NULL;
-static IMP DYFSOriginalPlayerContentA = NULL;
-static IMP DYFSOriginalPlayerContentB = NULL;
-static IMP DYFSOriginalPlayerContentC = NULL;
 static IMP DYFSOriginalSetFrame = NULL;
-
-// Associated-object keys used to settle player geometry without looping.
-// 等父容器尺寸稳定后再匹配高度，避免与原生布局互相触发
-static const NSTimeInterval kDYFSPlayerSettleDelay = 0.18;
-
-static char kDYFSPlayerLayoutPendingKey;
-static char kDYFSPlayerParentHeightKey;
-static char kDYFSPlayerSettledGeometryKey;
 
 CGFloat DYFSBottomTabBarHeight(UIView *view) {
     UIWindow *window = view.window;
@@ -42,29 +33,14 @@ CGFloat DYFSBottomTabBarHeight(UIView *view) {
     return 49.0;
 }
 
+#pragma mark - 透明化触发
+
+// 这些 hook 不再参与尺寸修正，只为透明化提供布局时机。
+
 void DYFSFeedTableLayout(id self, SEL cmd) {
     if (DYFSOriginalFeedLayout) ((void (*)(id, SEL))DYFSOriginalFeedLayout)(self, cmd);
     if (!DYFSIsEnabled()) return;
-
-    UIView *view = (UIView *)self;
-    // 个人主页（我-作品 / 我-喜欢）也走这张表；透明化不受尺寸守卫影响。
-    DYFSTransparencyApplyInView(view);
-    UIView *parent = view.superview;
-    if (!parent || DYFSInProfileContext(view) || DYFSIsActualLiveRoomContext(view) || DYFSIsLivePreStreamContext(view)) return;
-    CGRect frame = view.frame;
-    CGFloat targetHeight = CGRectGetHeight(parent.bounds);
-    if (!isfinite(targetHeight) || targetHeight <= 1.0) return;
-    if (fabs(CGRectGetHeight(frame) - targetHeight) <= 0.5 &&
-        fabs(CGRectGetMinY(frame)) <= 0.5) return;
-
-    CGFloat oldHeight = CGRectGetHeight(frame);
-    CGFloat oldY = CGRectGetMinY(frame);
-    frame.origin.y = 0.0;
-    frame.size.height = targetHeight;
-    view.frame = frame;
-    DYFSLayoutFixCount++;
-    DYFSLog([NSString stringWithFormat:@"AWEFeedTableView frame y %.2f -> %.2f, height %.2f -> %.2f",
-             oldY, CGRectGetMinY(frame), oldHeight, targetHeight]);
+    DYFSTransparencyApplyInView((UIView *)self);
 }
 
 void DYFSStoryContainerLayout(id self, SEL cmd) {
@@ -72,43 +48,7 @@ void DYFSStoryContainerLayout(id self, SEL cmd) {
         ((void (*)(id, SEL))DYFSOriginalStoryLayout)(self, cmd);
     }
     if (!DYFSIsEnabled()) return;
-
-    UIView *container = (UIView *)self;
-    DYFSTransparencyApplyInView(container);
-    if (DYFSInProfileContext(container) || DYFSIsActualLiveRoomContext(container) || DYFSIsLivePreStreamContext(container)) return;
-
-    id homeValue = DYFSSafeValueForKey(container, @"enableEnterProfile");
-    BOOL isHome = [homeValue respondsToSelector:@selector(boolValue)] && [homeValue boolValue];
-    if (!isHome) return;
-
-    for (UIView *subview in [container.subviews copy]) {
-        UIResponder *responder = subview.nextResponder;
-        NSString *responderName = responder ? NSStringFromClass(responder.class) : @"";
-        if (![responderName containsString:@"AWEPlayInteractionViewController"]) continue;
-
-        id baseViewController = DYFSSafeValueForKey(responder, @"awemeBaseViewController");
-        NSString *baseName = baseViewController ? NSStringFromClass([baseViewController class]) : @"";
-        if (![baseName containsString:@"AWEFeedCellViewController"]) continue;
-
-        UIView *parent = subview.superview;
-        if (!parent) continue;
-
-        CGFloat parentHeight = CGRectGetHeight(parent.bounds);
-        CGFloat tabBarHeight = DYFSBottomTabBarHeight(subview);
-        CGFloat targetHeight = parentHeight - tabBarHeight;
-        if (!isfinite(targetHeight) || targetHeight <= 1.0) continue;
-
-        CGRect frame = subview.frame;
-        CGFloat oldHeight = CGRectGetHeight(frame);
-        if (fabs(oldHeight - targetHeight) <= 0.5) continue;
-
-        frame.size.height = targetHeight;
-        subview.frame = frame;
-        DYFSInteractionContainerAdjustCount++;
-        DYFSLog([NSString stringWithFormat:
-            @"home interaction layer height %.2f -> %.2f (parent %.2f, tab bar %.2f)",
-            oldHeight, targetHeight, parentHeight, tabBarHeight]);
-    }
+    DYFSTransparencyApplyInView((UIView *)self);
 }
 
 void DYFSInteractionControllerLayout(id self, SEL cmd) {
@@ -117,173 +57,12 @@ void DYFSInteractionControllerLayout(id self, SEL cmd) {
     }
     if (!DYFSIsEnabled()) return;
     UIViewController *controller = (UIViewController *)self;
-    UIView *view = controller.view;
-    DYFSTransparencyApplyInView(view);
-    if (view && view.superview) DYFSTransparencyApplyInView(view.superview);
-    if (!view || !view.superview || DYFSInProfileContext(view) || DYFSIsActualLiveRoomContext(view) || DYFSIsLivePreStreamContext(view) || DYFSIsLivePreStreamPlayer(controller)) return;
-    if (!DYFSIsFeedCellInteractionController(controller)) return;
-
-    UIView *parent = view.superview;
-    CGFloat parentHeight = CGRectGetHeight(parent.bounds);
-    CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
-    CGFloat targetHeight = parentHeight - tabBarHeight;
-    CGRect frame = view.frame;
-    CGFloat screenWidth = CGRectGetWidth(UIScreen.mainScreen.bounds);
-
-    if (!isfinite(targetHeight) || targetHeight <= 1.0 ||
-        (fabs(CGRectGetWidth(frame) - screenWidth) > 1.0 && CGRectGetHeight(frame) < parentHeight)) {
-        return;
-    }
-    if (fabs(CGRectGetHeight(frame) - targetHeight) <= 0.5) return;
-
-    CGFloat oldHeight = CGRectGetHeight(frame);
-    frame.size.height = targetHeight;
-    view.frame = frame;
-    DYFSInteractionContainerAdjustCount++;
-    DYFSLog([NSString stringWithFormat:
-        @"interaction controller height %.2f -> %.2f (parent %.2f, tab bar %.2f)",
-        oldHeight, targetHeight, parentHeight, tabBarHeight]);
+    DYFSTransparencyApplyInView(controller.view);
+    if (controller.view.superview) DYFSTransparencyApplyInView(controller.view.superview);
 }
 
-static void DYFSApplyPlayerContentHeightNow(id playerController) {
-    if (!DYFSIsEnabled()) return;
+#pragma mark - 全局 -setFrame: 兜底（唯一的尺寸修正入口）
 
-    UIView *controllerView = [playerController isKindOfClass:UIViewController.class]
-        ? ((UIViewController *)playerController).view : nil;
-    // Unlike an active live room, the pre-stream preview is a screen that the
-    // user explicitly wants adjusted. Some builds host its player in a sibling
-    // controller, so use the active pre-stream context as a positive match too.
-    if (DYFSIsActualLiveRoomContext(controllerView)) return;
-    BOOL isLivePreStream = DYFSIsLivePreStreamPlayer(playerController) ||
-        DYFSIsLivePreStreamContext(controllerView);
-
-    UIView *contentView = DYFSSafeValueForKey(playerController, @"contentView");
-    if (DYFSIsActualLiveRoomContext(contentView)) return;
-    if (DYFSIsLivePreStreamContext(contentView)) isLivePreStream = YES;
-    if (DYFSInProfileContext(controllerView) || DYFSInProfileContext(contentView) ||
-        DYFSIsDetailVideoContext(controllerView) || DYFSIsDetailVideoContext(contentView)) {
-        return;
-    }
-    if (![contentView isKindOfClass:UIView.class] || !contentView.superview ||
-        !contentView.window || !contentView.superview.window) return;
-
-    UIView *parent = contentView.superview;
-    CGFloat parentHeight = CGRectGetHeight(parent.bounds);
-    CGFloat currentHeight = CGRectGetHeight(contentView.frame);
-    CGFloat diff = parentHeight - currentHeight;
-    CGFloat tabBarHeight = DYFSBottomTabBarHeight(contentView);
-    CGFloat tolerance = MAX(1.0, tabBarHeight * 0.03);
-    CGFloat targetHeight = currentHeight;
-
-    // Match the two common wrapper cases seen in DYYY: one tab-bar height short,
-    // or two tab-bar heights short. This targets contentView only, never controls.
-    if (fabs(diff - tabBarHeight) <= tolerance) {
-        targetHeight = parentHeight;
-    } else if (fabs(diff - (tabBarHeight * 2.0)) <= tolerance) {
-        targetHeight = parentHeight - tabBarHeight;
-    } else {
-        return;
-    }
-
-    if (!isfinite(targetHeight) || targetHeight <= 1.0 ||
-        fabs(currentHeight - targetHeight) <= 0.5) return;
-
-    CGRect frame = contentView.frame;
-    frame.size.height = targetHeight;
-    contentView.frame = frame;
-    DYFSPlayerContentAdjustCount++;
-    if (isLivePreStream) DYFSLivePreviewPlayerAdjustCount++;
-    DYFSLog([NSString stringWithFormat:
-        @"%@%@ contentView height %.2f -> %.2f (parent %.2f, diff %.2f, tab bar %.2f)",
-        isLivePreStream ? @"pre-stream " : @"",
-        NSStringFromClass([playerController class]), currentHeight, targetHeight, parentHeight, diff, tabBarHeight]);
-}
-
-static void DYFSSchedulePlayerContentHeight(id playerController) {
-    if (!playerController || !DYFSIsEnabled()) return;
-    UIViewController *controllerViewController = [playerController isKindOfClass:UIViewController.class]
-        ? (UIViewController *)playerController : nil;
-    UIView *controllerView = controllerViewController.view;
-    if (DYFSInProfileContext(controllerView) || DYFSIsDetailVideoContext(controllerView)) return;
-
-    UIView *currentContent = DYFSSafeValueForKey(playerController, @"contentView");
-    UIView *currentParent = [currentContent isKindOfClass:UIView.class] ? currentContent.superview : nil;
-    if ([currentContent isKindOfClass:UIView.class] && currentParent && currentContent.window && currentParent.window) {
-        NSArray *settled = objc_getAssociatedObject(playerController, &kDYFSPlayerSettledGeometryKey);
-        if ([settled isKindOfClass:NSArray.class] && settled.count == 3) {
-            CGFloat parentWidth = CGRectGetWidth(currentParent.bounds);
-            CGFloat parentHeight = CGRectGetHeight(currentParent.bounds);
-            CGFloat contentHeight = CGRectGetHeight(currentContent.bounds);
-            if (fabs([settled[0] doubleValue] - parentWidth) <= 1.0 &&
-                fabs([settled[1] doubleValue] - parentHeight) <= 1.0 &&
-                fabs([settled[2] doubleValue] - contentHeight) <= 1.0) return;
-        }
-    }
-    if ([objc_getAssociatedObject(playerController, &kDYFSPlayerLayoutPendingKey) boolValue]) return;
-
-    objc_setAssociatedObject(playerController, &kDYFSPlayerLayoutPendingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    __weak id weakController = playerController;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDYFSPlayerSettleDelay * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        id strongController = weakController;
-        if (!strongController) return;
-        objc_setAssociatedObject(strongController, &kDYFSPlayerLayoutPendingKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
-        UIView *content = DYFSSafeValueForKey(strongController, @"contentView");
-        UIView *parent = [content isKindOfClass:UIView.class] ? content.superview : nil;
-        if (!content.window || !parent.window) return;
-
-        CGFloat parentHeight = CGRectGetHeight(parent.bounds);
-        NSNumber *previousHeight = objc_getAssociatedObject(content, &kDYFSPlayerParentHeightKey);
-        if (!previousHeight || fabs(previousHeight.doubleValue - parentHeight) > 1.0) {
-            objc_setAssociatedObject(content, &kDYFSPlayerParentHeightKey, @(parentHeight), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            DYFSSchedulePlayerContentHeight(strongController);
-            return;
-        }
-
-        DYFSApplyPlayerContentHeightNow(strongController);
-
-        CGFloat settledParentWidth = CGRectGetWidth(parent.bounds);
-        CGFloat settledParentHeight = CGRectGetHeight(parent.bounds);
-        CGFloat settledContentHeight = CGRectGetHeight(content.bounds);
-        objc_setAssociatedObject(strongController, &kDYFSPlayerSettledGeometryKey,
-            @[@(settledParentWidth), @(settledParentHeight), @(settledContentHeight)],
-            OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    });
-}
-
-static void DYFSPlayerContentLayoutCommon(id self, SEL cmd, IMP original) {
-    if (original) ((void (*)(id, SEL))original)(self, cmd);
-    // 透明化不依赖尺寸匹配：个人主页（我-作品 / 我-喜欢）不参与高度修正，
-    // 但底栏与「相关搜索」/「合集」卡片仍需要透明。
-    UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
-    DYFSTransparencyApplyInView(root);
-    if (root.superview) DYFSTransparencyApplyInView(root.superview);
-    DYFSSchedulePlayerContentHeight(self);
-}
-
-void DYFSPlayerContentLayoutA(id self, SEL cmd) {
-    DYFSPlayerContentLayoutCommon(self, cmd, DYFSOriginalPlayerContentA);
-}
-
-void DYFSPlayerContentLayoutB(id self, SEL cmd) {
-    DYFSPlayerContentLayoutCommon(self, cmd, DYFSOriginalPlayerContentB);
-}
-
-void DYFSPlayerContentLayoutC(id self, SEL cmd) {
-    DYFSPlayerContentLayoutCommon(self, cmd, DYFSOriginalPlayerContentC);
-}
-
-
-
-// ---------------------------------------------------------------------------
-// 复刻 DYYY 的兜底机制：全局拦截 -setFrame:。
-//
-// 信息流里的直播卡片并不走 AWE 的播放器控制器层级，靠 hook cell 去搬动视图
-// 只会把视频推离原位。DYYY 的做法是在 -setFrame: 上统一兜底：凡是属于播放器
-// 控制器的视图，只要新高度比父视图"恰好差一个底栏"，就把高度补齐到父视图，
-// 且完全不动 origin —— 视频与文案都停在原位，只是下方不再留黑边。
-// ---------------------------------------------------------------------------
 static BOOL DYFSIsPlayerViewController(UIViewController *vc) {
     if (!vc) return NO;
     static Class playClassA, playClassB, playClassC;
@@ -301,31 +80,87 @@ static BOOL DYFSIsPlayerViewController(UIViewController *vc) {
 static void DYFSUIViewSetFrame(id self, SEL cmd, CGRect frame) {
     if (!DYFSOriginalSetFrame) return;
 
-    if (DYFSIsEnabled() && [self isKindOfClass:UIView.class]) {
-        UIView *view = (UIView *)self;
-        UIView *superview = view.superview;
-        CGFloat superH = CGRectGetHeight(superview.frame);
-        CGFloat height = CGRectGetHeight(frame);
+    if (!DYFSIsEnabled() || ![self isKindOfClass:UIView.class]) {
+        ((void (*)(id, SEL, CGRect))DYFSOriginalSetFrame)(self, cmd, frame);
+        return;
+    }
 
-        // 先做最便宜的几何判断，避免每次 setFrame 都回溯响应链。
-        // 与 DYYY 一致：只处理没有位移、且高度差刚好一个底栏的情况。
-        if (superview && superH > 0 && height > 0 && height < superH &&
-            frame.origin.x == 0 && frame.origin.y == 0) {
-            CGFloat diff = superH - height;
-            CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
-            if (tabBarHeight > 0 && fabs(diff - tabBarHeight) < 1.0) {
-                UIViewController *vc = DYFSFindViewController(view);
-                if (DYFSIsPlayerViewController(vc)) {
-                    frame.size.height = superH;   // 只补高度，origin 不动
-                }
+    UIView *view = (UIView *)self;
+    UIView *superview = view.superview;
+    if (!superview) {
+        ((void (*)(id, SEL, CGRect))DYFSOriginalSetFrame)(self, cmd, frame);
+        return;
+    }
+
+    CGFloat superH = CGRectGetHeight(superview.frame);
+    CGFloat height = CGRectGetHeight(frame);
+    if (superH <= 0 || height <= 0) {
+        ((void (*)(id, SEL, CGRect))DYFSOriginalSetFrame)(self, cmd, frame);
+        return;
+    }
+
+    NSString *className = NSStringFromClass(view.class);
+
+    // 1) 首页视频列表：撑满父容器。
+    //    作者主页有自己的分页容器，强改会让上下两条视频叠在一起，必须排除。
+    if ([className isEqualToString:kDYFSClassFeedTableView]) {
+        if (height < superH - 0.5 && !DYFSInProfileContext(view)) {
+            frame.origin.y = 0.0;
+            frame.size.height = superH;
+        }
+        ((void (*)(id, SEL, CGRect))DYFSOriginalSetFrame)(self, cmd, frame);
+        return;
+    }
+
+    // 2) 全宽视图：互动层与播放器内容视图。
+    //    先用屏宽粗筛，命中才回溯响应链，控制开销。
+    CGFloat screenWidth = UIScreen.mainScreen.bounds.size.width;
+    if (CGRectGetWidth(frame) >= screenWidth - 1.0) {
+        UIViewController *vc = DYFSFindViewController(view);
+        NSString *vcName = vc ? NSStringFromClass(vc.class) : @"";
+        CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
+
+        // 2a) 互动层：高度固定为「父容器 - 底栏」，
+        //     个人主页 / 直播间 / 推流预览保持抖音原生高度。
+        if ([vcName containsString:kDYFSClassPlayInteraction]) {
+            CGFloat targetH = superH - tabBarHeight;
+            if (targetH > 0 && fabs(height - targetH) > 0.5 &&
+                !DYFSInProfileContext(view) &&
+                !DYFSIsActualLiveRoomContext(view) &&
+                !DYFSIsLivePreStreamContext(view) &&
+                !DYFSIsLivePreStreamPlayer(vc) &&
+                DYFSIsFeedCellInteractionController(vc)) {
+                frame.size.height = targetH;
             }
+            ((void (*)(id, SEL, CGRect))DYFSOriginalSetFrame)(self, cmd, frame);
+            return;
+        }
+
+        // 2b) 播放器内容视图（含信息流直播卡片的视频）：
+        //     差一个底栏 → 补满；差两个底栏 → 补到差一个底栏。
+        //     只改高度，origin 完全不动。
+        if (DYFSIsPlayerViewController(vc) &&
+            frame.origin.x == 0 && frame.origin.y == 0 && height < superH &&
+            !DYFSIsActualLiveRoomContext(view)) {
+            CGFloat diff = superH - height;
+            CGFloat tolerance = MAX(1.0, tabBarHeight * 0.03);
+            if (fabs(diff - tabBarHeight) <= tolerance) {
+                frame.size.height = superH;
+            } else if (tabBarHeight > 0 && fabs(diff - tabBarHeight * 2.0) <= tolerance) {
+                frame.size.height = superH - tabBarHeight;
+            }
+            ((void (*)(id, SEL, CGRect))DYFSOriginalSetFrame)(self, cmd, frame);
+            return;
         }
     }
 
     ((void (*)(id, SEL, CGRect))DYFSOriginalSetFrame)(self, cmd, frame);
 }
 
+#pragma mark - 安装
+
 void DYFSLayoutInstallHooks(void) {
+    // feed / story / interaction 仅作为透明化的布局触发点。
     Class cls = NSClassFromString(kDYFSClassFeedTableView);
     if (!DYFSInstalledFeed && cls) {
         DYFSInstalledFeed = DYFSInstallHook(cls, @selector(layoutSubviews),
@@ -344,28 +179,10 @@ void DYFSLayoutInstallHooks(void) {
                     (IMP)DYFSInteractionControllerLayout, &DYFSOriginalInteractionControllerLayout);
     }
 
-    cls = NSClassFromString(kDYFSClassPlayVideoA);
-    if (!DYFSInstalledPlayerContentA && cls) {
-        DYFSInstalledPlayerContentA = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
-                    (IMP)DYFSPlayerContentLayoutA, &DYFSOriginalPlayerContentA);
-    }
-
-    cls = NSClassFromString(kDYFSClassPlayVideoB);
-    if (!DYFSInstalledPlayerContentB && cls) {
-        DYFSInstalledPlayerContentB = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
-                    (IMP)DYFSPlayerContentLayoutB, &DYFSOriginalPlayerContentB);
-    }
-
-    cls = NSClassFromString(kDYFSClassPlayVideoC);
-    if (!DYFSInstalledPlayerContentC && cls) {
-        DYFSInstalledPlayerContentC = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
-                    (IMP)DYFSPlayerContentLayoutC, &DYFSOriginalPlayerContentC);
-    }
-
-    // 全局兜底：装在 UIView 上，覆盖信息流直播卡片这类不走播放器层级的内容。
-    static BOOL installedSetFrame = NO;
-    if (!installedSetFrame) {
-        installedSetFrame = DYFSInstallHook(UIView.class, @selector(setFrame:),
-                                            (IMP)DYFSUIViewSetFrame, &DYFSOriginalSetFrame);
+    // 全局兜底：装在 UIView 上，覆盖直播卡片等一切内容。
+    // pre 式修正：抖音写入 frame 之前就把高度改对，因此不会出现启动跳动。
+    if (!DYFSInstalledSetFrameHook) {
+        DYFSInstalledSetFrameHook = DYFSInstallHook(UIView.class, @selector(setFrame:),
+                                                    (IMP)DYFSUIViewSetFrame, &DYFSOriginalSetFrame);
     }
 }

@@ -17,9 +17,6 @@ extern NSString * const DYFSSettingsTitle;
 extern BOOL DYFSInstalledFeed;
 extern BOOL DYFSInstalledStory;
 extern BOOL DYFSInstalledInteractionController;
-extern BOOL DYFSInstalledPlayerContentA;
-extern BOOL DYFSInstalledPlayerContentB;
-extern BOOL DYFSInstalledPlayerContentC;
 extern BOOL DYFSInstalledSidebarIcon;
 extern BOOL DYFSInstalledSidebarRight;
 extern BOOL DYFSInstalledTabBarLayout;
@@ -27,6 +24,7 @@ extern BOOL DYFSInstalledTabBarHidden;
 extern BOOL DYFSInstalledTabBarDidMove;
 extern BOOL DYFSInstalledTabBarDidAddSubview;
 extern BOOL DYFSInstalledInteractionProgress;
+extern BOOL DYFSInstalledSetFrameHook;
 extern BOOL DYFSInstalledPlayerProgress;
 extern BOOL DYFSInstalledNativeSettingsSwitch;
 extern BOOL DYFSNativeSettingsRowAdded;
@@ -38,10 +36,6 @@ extern BOOL DYFSVersionMismatch;
 extern NSString *DYFSLastInstallSummary;
 
 // Adjustment counters, surfaced by the diagnostics panel.
-extern NSUInteger DYFSLayoutFixCount;
-extern NSUInteger DYFSInteractionContainerAdjustCount;
-extern NSUInteger DYFSPlayerContentAdjustCount;
-extern NSUInteger DYFSLivePreviewPlayerAdjustCount;
 extern NSUInteger DYFSTabBarApplyCount;
 extern BOOL DYFSLastHomeTabSelected;
 extern BOOL DYFSLastTabBackgroundHidden;
