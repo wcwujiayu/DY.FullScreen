@@ -1587,6 +1587,10 @@ static void DYFSInstallHooks(void) {
     NSString *bundle = NSBundle.mainBundle.bundleIdentifier ?: @"";
     if (![bundle isEqualToString:DYFSBundleID]) return;
 
+    // The feed live-cell class may become available after initial +load.
+    // Keep installation idempotent and retry alongside the existing hook pass.
+    [[DYLiveFeedFullscreen sharedInstance] installHooksIfNeeded];
+
     Class cls = NSClassFromString(@"AWEFeedTableView");
     if (!DYFSInstalledFeed && cls) {
         DYFSInstalledFeed = DYFSInstallHook(cls, @selector(layoutSubviews),
