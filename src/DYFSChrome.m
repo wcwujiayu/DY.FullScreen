@@ -9,6 +9,7 @@
 #import "DYFSChrome.h"
 #import "DYFSCommon.h"
 #import "DYFSContext.h"
+#import <objc/message.h>
 
 static IMP DYFSOriginalTabBarLayout = NULL;
 static IMP DYFSOriginalTabBarHidden = NULL;

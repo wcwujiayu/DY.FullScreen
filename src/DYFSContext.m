@@ -8,6 +8,7 @@
 
 #import "DYFSContext.h"
 #import "DYFSCommon.h"
+#import <objc/message.h>
 
 static BOOL DYFSClassNameIsLiveRoom(NSString *name) {
     if (name.length == 0) return NO;

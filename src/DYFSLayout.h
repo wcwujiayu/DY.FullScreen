@@ -7,8 +7,7 @@
 
 #import <UIKit/UIKit.h>
 
-CGFloat DYFSBottomTabBarHeight(UIView *view);
-
+// 尺寸修正相关的 hook。DYFSBottomTabBarHeight 仅模块内部使用，不对外暴露。
 void DYFSFeedTableLayout(id self, SEL cmd);
 void DYFSStoryContainerLayout(id self, SEL cmd);
 void DYFSInteractionControllerLayout(id self, SEL cmd);
