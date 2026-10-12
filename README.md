@@ -3,22 +3,23 @@
 用于调整DY UI 的 Theos/Logos Tweak，仅在 **40.7.0** 中测试。  
 **仅供学习交流，禁止用于商业用途。**
 
-> 实验版本 0.3.15。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。原生设置项主标题为“首页全屏”，下方副标题为“胖胖专属”。0.3.15 允许开播前推流预览中的播放器容器参与原有高度匹配，不平移覆盖文案或按钮；不新增直播间专用布局 Hook；并增加直播间控制器识别保护，跳过已进入直播间的播放器尺寸、推荐卡片和评论底栏透明处理。0.3.15 撤销按屏幕位置猜测个人主页视频底部背景的宽泛处理，改为针对抖音评论输入栏背景组件进行透明处理；文字颜色、透明度、图标和点击区域不改。修复“相关搜索”和“合集”卡片透明逻辑：除卡片自身外，同时识别并移除与其重叠的独立灰色背景层，保留标签文字及交互控件。首页视频尺寸稳定性修正沿用 0.3.11。
+> 实验版本 0.3.16。目标环境：iOS 16.1、抖音 iOS 40.7.0、TrollStore + TrollFools。原生设置项主标题为“首页全屏”，下方副标题为“胖胖专属”。本版本保留 0.3.15 已有的普通视频、图集、个人主页、喜欢/收藏页面及卡片透明处理逻辑，不重写原全屏算法；新增独立的直播信息流模块，参考 DYYY 当前源码中 `AWEDPlayerFeedPlayerViewController` 与 `AWEDPlayerViewController_Merge` 对 `contentView` 高度差进行匹配的布局规则，仅在视图层级确认包含 `IESLiveInnerFeedLiveRoomCell` 时尝试调整播放器内容高度。正式直播间不处于该信息流单元层级时不会被此模块处理。直播卡片行为仍需在抖音 40.7.0 真机验证；如果该版本使用不同的播放器类或层级，模块会保守跳过，而不会扩大成全局播放器 Hook。
 
 ## 自动构建
 
-仓库使用 Theos/Logos 构建流程，生成 rootful、rootless、roothide 三种 Debian 包，以及 TrollFools 使用的动态库。推送代码后查看仓库 Actions 页面中的构建任务；成功后在该次运行记录底部 Artifacts 下载构建结果。
+仓库使用 Theos/Logos 构建流程，生成 rootful、rootless、roothide 三种 Debian 包，以及 TrollFools 使用的动态库。推送到 `main` 或本次开发分支后查看仓库 Actions 页面中的构建任务；成功后在该次运行记录底部 Artifacts 下载构建结果。
 
-预期文件包括三种 .deb、DY.FullScreen_0.3.15.dylib、DY.FullScreen.dylib、DY.FullScreen-TrollFools-0.3.15.zip 和 SHA256SUMS.txt。版本标签（例如 v0.3.15）用于触发 GitHub Release 发布流程。
+预期文件包括三种 .deb、`DY.FullScreen_0.3.16.dylib`、`DY.FullScreen.dylib`、`DY.FullScreen-TrollFools-0.3.16.zip` 和 `SHA256SUMS.txt`。版本标签（例如 `v0.3.16`）用于触发 GitHub Release 发布流程。
 
 ## 安装与测试
 
 1. 从 Actions Artifacts 下载构建包并解压。
 2. 在 TrollFools 中停用并移除旧版，再注入本次构建的 `DY.FullScreen.dylib`（或 ZIP 内的 dylib）；.deb 是 Debian 包格式，不是首选注入文件。
 3. 打开抖音侧边栏，在系统“设置”入口旁点击“胖胖专属”，检查开关和“运行诊断”。
-4. 测试时先停用其他会修改视频尺寸/布局的插件，避免 Hook 冲突。
-5. 检查个人主页作品、喜欢/收藏视频的底部评论输入栏背景，以及视频里的“相关搜索”和“合集”卡片背景。
-6. 若闪退或错位加重，立即在 TrollFools 停用本插件并重启抖音。
+4. 首先只启用 DY.FullScreen，确保已有功能正常；再检查首页、关注、附近/推荐流中的直播卡片是否铺满目标区域。
+5. 验证直播卡片上的点赞、评论、关注、文案等交互位置，再点击进入正式直播间，确认主播画面、评论、礼物与底部互动未变化。
+6. 检查个人主页作品、喜欢/收藏视频的底部评论输入栏背景，以及视频里的“相关搜索”和“合集”卡片背景。
+7. 若闪退或错位加重，立即在 TrollFools 停用本插件并重启抖音。
 
 ## 免责声明
 
