@@ -1208,7 +1208,9 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
             if (![identifier isEqualToString:itemIdentifier]) continue;
             DYFSSafeSetValueForKey(item, @"首页全屏", @"title");
             DYFSSafeSetValueForKey(item, @"胖胖专属", @"subTitle");
-            DYFSSafeSetValueForKey(item, @"", @"detail");
+            DYFSSafeSetValueForKey(item, @"胖胖专属", @"subtitle");
+            // Some Douyin settings-cell versions read detail as the secondary label.
+            DYFSSafeSetValueForKey(item, @"胖胖专属", @"detail");
             DYFSSafeSetValueForKey(item, @(DYFSIsEnabled()), @"isSwitchOn");
             // Existing rows can already have a cached native settings cell; reload after renaming.
             id existingTableView = DYFSSafeValueForKey(controller, @"tableView");
@@ -1231,7 +1233,9 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
     DYFSSafeSetValueForKey(item, itemIdentifier, @"identifier");
     DYFSSafeSetValueForKey(item, @"首页全屏", @"title");
     DYFSSafeSetValueForKey(item, @"胖胖专属", @"subTitle");
-    DYFSSafeSetValueForKey(item, @"", @"detail");
+    DYFSSafeSetValueForKey(item, @"胖胖专属", @"subtitle");
+    // Some Douyin settings-cell versions read detail as the secondary label.
+    DYFSSafeSetValueForKey(item, @"胖胖专属", @"detail");
     DYFSSafeSetValueForKey(item, @6, @"cellType");
     DYFSSafeSetValueForKey(item, @0, @"colorStyle");
     DYFSSafeSetValueForKey(item, @YES, @"isEnable");
