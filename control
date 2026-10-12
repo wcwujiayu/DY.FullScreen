@@ -1,8 +1,8 @@
 Package: com.dy.fullscreen
 Name: DY.FullScreen
-Version: 0.3.17
+Version: 0.3.18
 Architecture: iphoneos-arm
-Description: Theos/Logos Tweak for adjusting DY UI and narrowly scoped feed live-card player sizing; tested only on 40.7.0. Learning and non-commercial use only.
+Description: Theos/Logos Tweak for adjusting DY UI and narrowly scoped feed live-card interaction layout; tested only on 40.7.0. Learning and non-commercial use only.
 Maintainer: DY.FullScreen contributors
 Author: DY.FullScreen contributors
 Section: Tweaks
