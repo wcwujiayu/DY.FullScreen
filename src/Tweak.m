@@ -72,6 +72,9 @@ static char kDYFSPlayerLayoutPendingKey;
 static char kDYFSPlayerParentHeightKey;
 static char kDYFSPlayerSettledGeometryKey;
 static IMP DYFSOriginalNativeSettingsDidAppear = NULL;
+static IMP DYFSOriginalNativeSettingsCellForRow = NULL;
+static BOOL DYFSInstalledNativeSettingsSubtitle = NO;
+static const NSInteger DYFSSubtitleLabelTag = 420741;
 
 static void DYFSLog(NSString *message) {
     NSLog(@"[DY.FullScreen] %@", message);
@@ -1300,6 +1303,62 @@ static void DYFSNativeSettingsDidAppear(id self, SEL cmd, BOOL animated) {
     });
 }
 
+static UILabel *DYFSFindLabelWithText(UIView *root, NSString *text, NSUInteger depth) {
+    if (!root || depth > 12) return nil;
+    if ([root isKindOfClass:UILabel.class] && [((UILabel *)root).text isEqualToString:text]) {
+        return (UILabel *)root;
+    }
+    for (UIView *child in root.subviews) {
+        UILabel *match = DYFSFindLabelWithText(child, text, depth + 1);
+        if (match) return match;
+    }
+    return nil;
+}
+
+static id DYFSNativeSettingsCellForRow(id self, SEL cmd, UITableView *tableView, NSIndexPath *indexPath) {
+    id cell = nil;
+    if (DYFSOriginalNativeSettingsCellForRow) {
+        cell = ((id (*)(id, SEL, id, id))DYFSOriginalNativeSettingsCellForRow)(self, cmd, tableView, indexPath);
+    }
+    if (!cell || ![cell isKindOfClass:UITableViewCell.class] || !indexPath) return cell;
+
+    id viewModel = DYFSSafeValueForKey(self, @"viewModel");
+    NSArray *sections = DYFSSafeValueForKey(viewModel, @"sectionDataArray");
+    if (![sections isKindOfClass:NSArray.class] || indexPath.section >= sections.count) return cell;
+    id section = sections[indexPath.section];
+    NSArray *items = DYFSSafeValueForKey(section, @"itemArray");
+    if (![items isKindOfClass:NSArray.class] || indexPath.row >= items.count) return cell;
+    id item = items[indexPath.row];
+    if (![DYFSSafeValueForKey(item, @"identifier") isEqualToString:DYFSEnabledKey]) return cell;
+
+    UITableViewCell *settingsCell = (UITableViewCell *)cell;
+    UIView *labelRoot = settingsCell.contentView ?: settingsCell;
+    UILabel *titleLabel = DYFSFindLabelWithText(labelRoot, @"首页全屏", 0);
+    if (!titleLabel) titleLabel = settingsCell.textLabel;
+    if (!titleLabel) return cell;
+
+    UILabel *subtitle = (UILabel *)[labelRoot viewWithTag:DYFSSubtitleLabelTag];
+    if (![subtitle isKindOfClass:UILabel.class]) {
+        subtitle = [[UILabel alloc] initWithFrame:CGRectZero];
+        subtitle.tag = DYFSSubtitleLabelTag;
+        subtitle.text = @"胖胖专属";
+        subtitle.font = [UIFont systemFontOfSize:11.0];
+        subtitle.textColor = UIColor.secondaryLabelColor;
+        subtitle.numberOfLines = 1;
+        subtitle.backgroundColor = UIColor.clearColor;
+        subtitle.userInteractionEnabled = NO;
+        [labelRoot addSubview:subtitle];
+    }
+    CGRect titleFrame = [titleLabel.superview convertRect:titleLabel.frame toView:labelRoot];
+    CGFloat rowWidth = CGRectGetWidth(labelRoot.bounds);
+    CGFloat subtitleX = CGRectGetMinX(titleFrame);
+    CGFloat subtitleY = CGRectGetMaxY(titleFrame) - 1.0;
+    CGFloat subtitleWidth = MAX(40.0, MIN(CGRectGetWidth(titleFrame), rowWidth - subtitleX - 72.0));
+    subtitle.frame = CGRectMake(subtitleX, subtitleY, subtitleWidth, 14.0);
+    [labelRoot bringSubviewToFront:subtitle];
+    return cell;
+}
+
 static BOOL DYFSIsTabBarControl(UIView *view, Class generalButtonClass, Class plusButtonClass) {
     if (!view) return NO;
     NSString *name = NSStringFromClass(view.class);
@@ -1730,6 +1789,24 @@ static void DYFSInstallHooks(void) {
     if (cls && !DYFSInstalledNativeSettingsSwitch) {
         DYFSInstalledNativeSettingsSwitch = DYFSInstallHook(cls, @selector(viewDidAppear:),
                     (IMP)DYFSNativeSettingsDidAppear, &DYFSOriginalNativeSettingsDidAppear);
+    }
+    if (cls && !DYFSInstalledNativeSettingsSubtitle) {
+        SEL cellSelector = @selector(tableView:cellForRowAtIndexPath:);
+        Method cellMethod = class_getInstanceMethod(cls, cellSelector);
+        if (cellMethod) {
+            const char *cellTypes = method_getTypeEncoding(cellMethod);
+            IMP cellOriginal = method_getImplementation(cellMethod);
+            IMP cellReplacement = (IMP)DYFSNativeSettingsCellForRow;
+            if (class_addMethod(cls, cellSelector, cellReplacement, cellTypes)) {
+                DYFSOriginalNativeSettingsCellForRow = cellOriginal;
+                DYFSInstalledNativeSettingsSubtitle = YES;
+            } else {
+                Method ownCellMethod = class_getInstanceMethod(cls, cellSelector);
+                DYFSOriginalNativeSettingsCellForRow = method_setImplementation(ownCellMethod, cellReplacement);
+                DYFSInstalledNativeSettingsSubtitle = DYFSOriginalNativeSettingsCellForRow != cellReplacement;
+            }
+            if (DYFSInstalledNativeSettingsSubtitle) DYFSLog(@"native settings subtitle label hook installed");
+        }
     }
 
     NSString *summary = [NSString stringWithFormat:@"video-list %@; story-container %@; interaction-controller %@; player-content %d/3; live-copy %@; sidebar hooks %lu/2; tab bar hooks %lu/2; settings-switch %@",
