@@ -984,10 +984,15 @@ static id DYFSNativeSettingsCellForRow(id self, SEL cmd, UITableView *tableView,
 
     id viewModel = DYFSSafeValueForKey(self, @"viewModel");
     NSArray *sections = DYFSSafeValueForKey(viewModel, @"sectionDataArray");
-    if (![sections isKindOfClass:NSArray.class] || indexPath.section >= sections.count) return cell;
+    // NSIndexPath.section/row are NSInteger while -count is NSUInteger; comparing
+    // them directly trips -Werror,-Wsign-compare. Guard negatives first, then
+    // compare as unsigned.
+    if (![sections isKindOfClass:NSArray.class] || indexPath.section < 0 ||
+        (NSUInteger)indexPath.section >= sections.count) return cell;
     id section = sections[indexPath.section];
     NSArray *items = DYFSSafeValueForKey(section, @"itemArray");
-    if (![items isKindOfClass:NSArray.class] || indexPath.row >= items.count) return cell;
+    if (![items isKindOfClass:NSArray.class] || indexPath.row < 0 ||
+        (NSUInteger)indexPath.row >= items.count) return cell;
     id item = items[indexPath.row];
     if (![DYFSSafeValueForKey(item, @"identifier") isEqualToString:DYFSEnabledKey]) return cell;
 
