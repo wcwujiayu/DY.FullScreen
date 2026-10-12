@@ -33,7 +33,7 @@ static BOOL DYFSIsPreStreamView(UIView *view) {
 
 + (void)load {
     dispatch_async(dispatch_get_main_queue(), ^{
-        [[self sharedInstance] installLiveFeedCellHookIfAvailable];
+        [[self sharedInstance] installHooksIfNeeded];
     });
 }
 
@@ -87,7 +87,7 @@ static BOOL DYFSIsPreStreamView(UIView *view) {
     [controllerView layoutIfNeeded];
 }
 
-- (void)installLiveFeedCellHookIfAvailable {
+- (void)installHooksIfNeeded {
     if (DYFSInstalledLiveFeedCellLayout) return;
     Class cls = NSClassFromString(@"IESLiveInnerFeedLiveRoomCell");
     SEL selector = @selector(layoutSubviews);
