@@ -7,7 +7,9 @@
 
 #import <UIKit/UIKit.h>
 
-// 尺寸修正相关的 hook。DYFSBottomTabBarHeight 仅模块内部使用，不对外暴露。
+/// 实测底栏高度；找不到 AWENormalModeTabBar 时回退 49 + safeArea。
+CGFloat DYFSBottomTabBarHeight(UIView *view);
+
 void DYFSFeedTableLayout(id self, SEL cmd);
 void DYFSStoryContainerLayout(id self, SEL cmd);
 void DYFSInteractionControllerLayout(id self, SEL cmd);

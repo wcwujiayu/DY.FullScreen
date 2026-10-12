@@ -28,7 +28,7 @@ static char kDYFSPlayerLayoutPendingKey;
 static char kDYFSPlayerParentHeightKey;
 static char kDYFSPlayerSettledGeometryKey;
 
-static CGFloat DYFSBottomTabBarHeight(UIView *view) {
+CGFloat DYFSBottomTabBarHeight(UIView *view) {
     UIWindow *window = view.window;
     if (window) {
         UIView *tabBar = DYFSFindSubviewOfClass(window, @"AWENormalModeTabBar", 0);

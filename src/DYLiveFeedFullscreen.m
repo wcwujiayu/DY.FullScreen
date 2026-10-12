@@ -9,25 +9,11 @@
 
 #import "DYLiveFeedFullscreen.h"
 #import "DYFSCommon.h"
+#import "DYFSLayout.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
 static IMP DYFSOriginalLiveFeedCellLayout = NULL;
-
-// DYYY 也实现了信息流直播卡片的布局调整。检测到 DYYY 注入时本模块完全不参与，
-// 避免 DYYY 的布局协调器与我们重复撑满造成的文案 / 按钮错位。
-static BOOL DYFSIsDYYPLoaded(void) {
-    static dispatch_once_t onceToken;
-    static BOOL present = NO;
-    dispatch_once(&onceToken, ^{
-        present = NSClassFromString(@"DYYYManager") != nil ||
-                  NSClassFromString(@"DYYYHookManager") != nil ||
-                  NSClassFromString(@"DYYYSettingsHelper") != nil ||
-                  NSClassFromString(@"DYYYSettingViewController") != nil;
-        if (present) NSLog(@"[DY.FullScreen] DYYY detected; live-feed adjustments disabled");
-    });
-    return present;
-}
 static BOOL DYFSInstalledLiveFeedCellLayout = NO;
 
 static BOOL DYFSIsPreStreamView(UIView *view) {
@@ -72,7 +58,6 @@ static BOOL DYFSIsPreStreamView(UIView *view) {
 }
 
 - (void)processLiveFeedView:(UIView *)view {
-    if (DYFSIsDYYPLoaded()) return;
     if (![self isLiveFeedView:view]) return;
 
     UIView *cell = view;
@@ -97,15 +82,39 @@ static BOOL DYFSIsPreStreamView(UIView *view) {
     // Only size a controller view that is already a direct child of the card.
     // Never reparent it or touch the formal live-room / pre-stream hierarchy.
     if (![controllerView isKindOfClass:UIView.class] || controllerView.superview != cell) return;
-    CGRect target = cell.bounds;
-    if (CGRectGetWidth(target) < 100.0 || CGRectGetHeight(target) < 160.0) return;
-    if (!CGRectEqualToRect(controllerView.frame, target)) controllerView.frame = target;
+
+    CGFloat cellHeight = CGRectGetHeight(cell.bounds);
+    CGFloat currentHeight = CGRectGetHeight(controllerView.frame);
+    if (CGRectGetWidth(cell.bounds) < 100.0 || cellHeight < 160.0 || currentHeight <= 1.0) return;
+
+    // 只补偿「差一个底栏高度」或「差两个底栏高度」两种情况，其余一律交给抖音
+    // 自己的布局计算（这与 DYYY 对播放器 contentView 的处理方式一致）。
+    //
+    // 千万不要无条件把观众视图拉伸到 cell.bounds：那样会绕过抖音内部的布局，
+    // 用 frame 定位的标题文案与「进入直播间」按钮不会跟着重排，表现为不居中。
+    CGFloat tabBarHeight = DYFSBottomTabBarHeight(cell);
+    CGFloat tolerance = MAX(1.0, tabBarHeight * 0.03);
+    CGFloat diff = cellHeight - currentHeight;
+    CGFloat targetHeight = currentHeight;
+
+    if (fabs(diff - tabBarHeight) <= tolerance) {
+        targetHeight = cellHeight;
+    } else if (fabs(diff - tabBarHeight * 2.0) <= tolerance) {
+        targetHeight = cellHeight - tabBarHeight;
+    } else {
+        return;
+    }
+
+    if (fabs(currentHeight - targetHeight) <= 0.5) return;
+
+    CGRect frame = controllerView.frame;
+    frame.size.height = targetHeight;
+    controllerView.frame = frame;
     [controllerView setNeedsLayout];
     [controllerView layoutIfNeeded];
 }
 
 - (void)installHooksIfNeeded {
-    if (DYFSIsDYYPLoaded()) return;
     if (DYFSInstalledLiveFeedCellLayout) return;
     Class cls = NSClassFromString(kDYFSClassLiveFeedCell);
     SEL selector = @selector(layoutSubviews);
