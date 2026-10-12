@@ -8,6 +8,30 @@
 #import "DYFSCommon.h"
 #import <objc/message.h>
 
+// 抖音私有类名集中清单（改版时只需改这里）
+NSString * const kDYFSClassFeedTableView = @"AWEFeedTableView";
+NSString * const kDYFSClassStoryContainer = @"AWEStoryContainerCollectionView";
+NSString * const kDYFSClassPlayInteraction = @"AWEPlayInteractionViewController";
+NSString * const kDYFSClassPlayVideoA = @"AWEAwemePlayVideoViewController";
+NSString * const kDYFSClassPlayVideoB = @"AWEDPlayerFeedPlayerViewController";
+NSString * const kDYFSClassPlayVideoC = @"AWEDPlayerViewController_Merge";
+NSString * const kDYFSClassSidebarIcon = @"AWELeftSideBarTopIconHorizontalView";
+NSString * const kDYFSClassSidebarRight = @"AWELeftSideBarTopRightLayoutView";
+NSString * const kDYFSClassInteractionProgress = @"AWEPlayInteractionProgressContainerView";
+NSString * const kDYFSClassPlayerProgress = @"AWEDPlayerProgressContainerView";
+NSString * const kDYFSClassTabBar = @"AWENormalModeTabBar";
+NSString * const kDYFSClassTabBarGeneralButton = @"AWENormalModeTabBarGeneralButton";
+NSString * const kDYFSClassTabBarGeneralPlusButton = @"AWENormalModeTabBarGeneralPlusButton";
+NSString * const kDYFSClassTabBarPlusButton = @"AWENormalModeTabBarPlusButton";
+NSString * const kDYFSClassSettings = @"AWESettingsTableViewController";
+NSString * const kDYFSClassSettingItemModel = @"AWESettingItemModel";
+NSString * const kDYFSClassSettingSectionModel = @"AWESettingSectionModel";
+NSString * const kDYFSClassLiveFeedCell = @"IESLiveInnerFeedLiveRoomCell";
+NSString * const kDYFSClassBarBackground = @"_UIBarBackground";
+
+const NSUInteger kDYFSMaxInstallAttempts = 60;
+const NSTimeInterval kDYFSInstallRetryInterval = 1.0;
+
 NSString * const DYFSBundleID = @"com.ss.iphone.ugc.Aweme";
 NSString * const DYFSTestedVersion = @"40.7.0";
 NSString * const DYFSEnabledKey = @"com.dy.fullscreen.enabled";

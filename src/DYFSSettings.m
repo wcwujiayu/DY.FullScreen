@@ -19,6 +19,12 @@ static const NSInteger kDYFSSettingsEntryButtonTag = 420740;
 static const CGFloat kDYFSSettingsEntryButtonWidth = 88.0;
 static const CGFloat kDYFSSettingsEntryButtonHeight = 32.0;
 
+// 原生设置项注入的重试策略：抖音可能在 viewDidAppear 之后才填充 sectionDataArray
+static const NSUInteger kDYFSNativeSettingsRetryCount = 8;
+static const NSTimeInterval kDYFSNativeSettingsRetryInterval = 0.25;
+// 侧边栏图标布局完成前挂载入口可能取到错误坐标
+static const NSTimeInterval kDYFSEntryMountDelay = 0.3;
+
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
@@ -270,7 +276,7 @@ void DYFSScanForSettingsEntry(UIView *root, NSUInteger depth) {
 }
 
 static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
-    Class settingsClass = NSClassFromString(@"AWESettingsTableViewController");
+    Class settingsClass = NSClassFromString(kDYFSClassSettings);
     if (!controller || !settingsClass || ![controller isKindOfClass:settingsClass]) return;
 
     id viewModel = nil;
@@ -313,8 +319,8 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
         }
     }
 
-    Class itemClass = NSClassFromString(@"AWESettingItemModel");
-    Class sectionClass = NSClassFromString(@"AWESettingSectionModel");
+    Class itemClass = NSClassFromString(kDYFSClassSettingItemModel);
+    Class sectionClass = NSClassFromString(kDYFSClassSettingSectionModel);
     if (!itemClass || !sectionClass) {
         DYFSLog(@"native settings item/section classes not found");
         return;
@@ -372,7 +378,7 @@ static void DYFSRetryNativeSettingsSwitch(UIViewController *controller, NSUInteg
     DYFSEnsureNativeSettingsSwitch(controller);
     if (DYFSNativeSettingsRowAdded || attemptsLeft == 0) return;
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDYFSNativeSettingsRetryInterval * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         DYFSRetryNativeSettingsSwitch(controller, attemptsLeft - 1);
     });
@@ -386,14 +392,14 @@ void DYFSNativeSettingsDidAppear(id self, SEL cmd, BOOL animated) {
         // Re-check each time Settings opens. Douyin can populate sectionDataArray
         // after viewDidAppear, so retry briefly instead of waiting for a reopen.
         DYFSNativeSettingsRowAdded = NO;
-        DYFSRetryNativeSettingsSwitch((UIViewController *)self, 8);
+        DYFSRetryNativeSettingsSwitch((UIViewController *)self, kDYFSNativeSettingsRetryCount);
     });
 }
 
 void DYFSLeftSidebarIconDidMove(id self, SEL cmd) {
     if (DYFSOriginalSidebarIconMove) ((void (*)(id, SEL))DYFSOriginalSidebarIconMove)(self, cmd);
     UIView *view = (UIView *)self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDYFSEntryMountDelay * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         DYFSInstallSettingsEntry(view);
     });
@@ -402,7 +408,7 @@ void DYFSLeftSidebarIconDidMove(id self, SEL cmd) {
 void DYFSLeftSidebarRightDidMove(id self, SEL cmd) {
     if (DYFSOriginalSidebarRightMove) ((void (*)(id, SEL))DYFSOriginalSidebarRightMove)(self, cmd);
     UIView *view = (UIView *)self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDYFSEntryMountDelay * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         DYFSInstallSettingsEntry(view);
     });
@@ -410,19 +416,19 @@ void DYFSLeftSidebarRightDidMove(id self, SEL cmd) {
 
 
 void DYFSSettingsInstallHooks(void) {
-    Class cls = NSClassFromString(@"AWELeftSideBarTopIconHorizontalView");
+    Class cls = NSClassFromString(kDYFSClassSidebarIcon);
     if (!DYFSInstalledSidebarIcon && cls) {
         DYFSInstalledSidebarIcon = DYFSInstallHook(cls, @selector(didMoveToSuperview),
                     (IMP)DYFSLeftSidebarIconDidMove, &DYFSOriginalSidebarIconMove);
     }
 
-    cls = NSClassFromString(@"AWELeftSideBarTopRightLayoutView");
+    cls = NSClassFromString(kDYFSClassSidebarRight);
     if (!DYFSInstalledSidebarRight && cls) {
         DYFSInstalledSidebarRight = DYFSInstallHook(cls, @selector(didMoveToSuperview),
                     (IMP)DYFSLeftSidebarRightDidMove, &DYFSOriginalSidebarRightMove);
     }
 
-    cls = NSClassFromString(@"AWESettingsTableViewController");
+    cls = NSClassFromString(kDYFSClassSettings);
     if (cls && !DYFSInstalledNativeSettingsSwitch) {
         DYFSInstalledNativeSettingsSwitch = DYFSInstallHook(cls, @selector(viewDidAppear:),
                     (IMP)DYFSNativeSettingsDidAppear, &DYFSOriginalNativeSettingsDidAppear);

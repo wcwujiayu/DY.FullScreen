@@ -8,6 +8,7 @@
 //
 
 #import "DYLiveFeedFullscreen.h"
+#import "DYFSCommon.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -89,7 +90,7 @@ static BOOL DYFSIsPreStreamView(UIView *view) {
 
 - (void)installHooksIfNeeded {
     if (DYFSInstalledLiveFeedCellLayout) return;
-    Class cls = NSClassFromString(@"IESLiveInnerFeedLiveRoomCell");
+    Class cls = NSClassFromString(kDYFSClassLiveFeedCell);
     SEL selector = @selector(layoutSubviews);
     Method method = cls ? class_getInstanceMethod(cls, selector) : NULL;
     if (!method) return;

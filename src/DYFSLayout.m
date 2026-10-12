@@ -20,6 +20,9 @@ static IMP DYFSOriginalPlayerContentB = NULL;
 static IMP DYFSOriginalPlayerContentC = NULL;
 
 // Associated-object keys used to settle player geometry without looping.
+// 等父容器尺寸稳定后再匹配高度，避免与原生布局互相触发
+static const NSTimeInterval kDYFSPlayerSettleDelay = 0.18;
+
 static char kDYFSPlayerLayoutPendingKey;
 static char kDYFSPlayerParentHeightKey;
 static char kDYFSPlayerSettledGeometryKey;
@@ -213,7 +216,7 @@ static void DYFSSchedulePlayerContentHeight(id playerController) {
 
     objc_setAssociatedObject(playerController, &kDYFSPlayerLayoutPendingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     __weak id weakController = playerController;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.18 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDYFSPlayerSettleDelay * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         id strongController = weakController;
         if (!strongController) return;
@@ -261,37 +264,37 @@ void DYFSPlayerContentLayoutC(id self, SEL cmd) {
 
 
 void DYFSLayoutInstallHooks(void) {
-    Class cls = NSClassFromString(@"AWEFeedTableView");
+    Class cls = NSClassFromString(kDYFSClassFeedTableView);
     if (!DYFSInstalledFeed && cls) {
         DYFSInstalledFeed = DYFSInstallHook(cls, @selector(layoutSubviews),
                                             (IMP)DYFSFeedTableLayout, &DYFSOriginalFeedLayout);
     }
 
-    cls = NSClassFromString(@"AWEStoryContainerCollectionView");
+    cls = NSClassFromString(kDYFSClassStoryContainer);
     if (!DYFSInstalledStory && cls) {
         DYFSInstalledStory = DYFSInstallHook(cls, @selector(layoutSubviews),
                     (IMP)DYFSStoryContainerLayout, &DYFSOriginalStoryLayout);
     }
 
-    cls = NSClassFromString(@"AWEPlayInteractionViewController");
+    cls = NSClassFromString(kDYFSClassPlayInteraction);
     if (!DYFSInstalledInteractionController && cls) {
         DYFSInstalledInteractionController = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
                     (IMP)DYFSInteractionControllerLayout, &DYFSOriginalInteractionControllerLayout);
     }
 
-    cls = NSClassFromString(@"AWEAwemePlayVideoViewController");
+    cls = NSClassFromString(kDYFSClassPlayVideoA);
     if (!DYFSInstalledPlayerContentA && cls) {
         DYFSInstalledPlayerContentA = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
                     (IMP)DYFSPlayerContentLayoutA, &DYFSOriginalPlayerContentA);
     }
 
-    cls = NSClassFromString(@"AWEDPlayerFeedPlayerViewController");
+    cls = NSClassFromString(kDYFSClassPlayVideoB);
     if (!DYFSInstalledPlayerContentB && cls) {
         DYFSInstalledPlayerContentB = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
                     (IMP)DYFSPlayerContentLayoutB, &DYFSOriginalPlayerContentB);
     }
 
-    cls = NSClassFromString(@"AWEDPlayerViewController_Merge");
+    cls = NSClassFromString(kDYFSClassPlayVideoC);
     if (!DYFSInstalledPlayerContentC && cls) {
         DYFSInstalledPlayerContentC = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
                     (IMP)DYFSPlayerContentLayoutC, &DYFSOriginalPlayerContentC);

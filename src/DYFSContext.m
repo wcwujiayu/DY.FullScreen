@@ -10,13 +10,28 @@
 #import "DYFSCommon.h"
 #import <objc/message.h>
 
+// 上下文判定用的类名特征串（抖音改版时只需改这里）
+static NSString * const kDYFSGuardUserHome = @"UserHomeViewController";
+static NSString * const kDYFSGuardUserProfile = @"UserProfileViewController";
+static NSString * const kDYFSGuardProfile = @"ProfileViewController";
+static NSString * const kDYFSGuardPreStreamVC = @"AWELiveNewPreStreamViewController";
+static NSString * const kDYFSGuardPreStream = @"AWELivePreStream";
+static NSString * const kDYFSGuardIESAudience = @"IESLiveAudienceViewController";
+static NSString * const kDYFSGuardAWEAudience = @"AWELiveAudienceViewController";
+static NSString * const kDYFSGuardLiveRoomContainer = @"LiveRoomContainerViewController";
+static NSString * const kDYFSGuardLiveRoom = @"LiveRoomViewController";
+static NSString * const kDYFSGuardDetailTable = @"AWEAwemeDetailTableViewController";
+static NSString * const kDYFSGuardDetailCell = @"AWEAwemeDetailCellViewController";
+static NSString * const kDYFSGuardMixPanel = @"AWEMixVideoPanelDetailTableViewController";
+static NSString * const kDYFSGuardFeedCell = @"AWEFeedCellViewController";
+
 static BOOL DYFSClassNameIsLiveRoom(NSString *name) {
     if (name.length == 0) return NO;
-    return [name containsString:@"IESLiveAudienceViewController"] ||
-           [name containsString:@"AWELiveAudienceViewController"] ||
+    return [name containsString:kDYFSGuardIESAudience] ||
+           [name containsString:kDYFSGuardAWEAudience] ||
            [name containsString:@"IESLiveInnerFeedLiveRoomCell"] ||
-           [name containsString:@"LiveRoomViewController"] ||
-           [name containsString:@"LiveRoomContainerViewController"];
+           [name containsString:kDYFSGuardLiveRoom] ||
+           [name containsString:kDYFSGuardLiveRoomContainer];
 }
 
 BOOL DYFSInProfileContext(UIView *view) {
@@ -24,9 +39,9 @@ BOOL DYFSInProfileContext(UIView *view) {
     for (NSUInteger depth = 0; item && depth < 20; depth++) {
         item = item.nextResponder;
         NSString *name = item ? NSStringFromClass(item.class) : @"";
-        if ([name containsString:@"UserHomeViewController"] ||
-            [name containsString:@"UserProfileViewController"] ||
-            [name containsString:@"ProfileViewController"]) {
+        if ([name containsString:kDYFSGuardUserHome] ||
+            [name containsString:kDYFSGuardUserProfile] ||
+            [name containsString:kDYFSGuardProfile]) {
             return YES;
         }
     }
@@ -38,8 +53,8 @@ BOOL DYFSIsLivePreStreamContext(UIView *view) {
 
     for (UIView *cursor = view; cursor; cursor = cursor.superview) {
         NSString *name = NSStringFromClass(cursor.class);
-        if ([name containsString:@"AWELiveNewPreStreamViewController"] ||
-            [name containsString:@"AWELivePreStream"]) {
+        if ([name containsString:kDYFSGuardPreStreamVC] ||
+            [name containsString:kDYFSGuardPreStream]) {
             return YES;
         }
     }
@@ -47,8 +62,8 @@ BOOL DYFSIsLivePreStreamContext(UIView *view) {
     UIViewController *controller = DYFSFindViewController(view);
     for (NSUInteger depth = 0; controller && depth < 20; depth++, controller = controller.parentViewController) {
         NSString *name = NSStringFromClass(controller.class);
-        if ([name containsString:@"AWELiveNewPreStreamViewController"] ||
-            [name containsString:@"AWELivePreStream"]) {
+        if ([name containsString:kDYFSGuardPreStreamVC] ||
+            [name containsString:kDYFSGuardPreStream]) {
             return YES;
         }
     }
@@ -56,8 +71,8 @@ BOOL DYFSIsLivePreStreamContext(UIView *view) {
     UIResponder *responder = view;
     for (NSUInteger depth = 0; responder && depth < 40; depth++, responder = responder.nextResponder) {
         NSString *name = NSStringFromClass(responder.class);
-        if ([name containsString:@"AWELiveNewPreStreamViewController"] ||
-            [name containsString:@"AWELivePreStream"]) {
+        if ([name containsString:kDYFSGuardPreStreamVC] ||
+            [name containsString:kDYFSGuardPreStream]) {
             return YES;
         }
     }
@@ -68,8 +83,8 @@ BOOL DYFSIsLivePreStreamPlayer(id playerController) {
     if (!playerController) return NO;
 
     NSString *ownName = NSStringFromClass([playerController class]);
-    if ([ownName containsString:@"AWELiveNewPreStreamViewController"] ||
-        [ownName containsString:@"AWELivePreStream"]) {
+    if ([ownName containsString:kDYFSGuardPreStreamVC] ||
+        [ownName containsString:kDYFSGuardPreStream]) {
         return YES;
     }
 
@@ -77,8 +92,8 @@ BOOL DYFSIsLivePreStreamPlayer(id playerController) {
         UIViewController *cursor = (UIViewController *)playerController;
         for (NSUInteger depth = 0; cursor && depth < 20; depth++, cursor = cursor.parentViewController) {
             NSString *name = NSStringFromClass(cursor.class);
-            if ([name containsString:@"AWELiveNewPreStreamViewController"] ||
-                [name containsString:@"AWELivePreStream"]) {
+            if ([name containsString:kDYFSGuardPreStreamVC] ||
+                [name containsString:kDYFSGuardPreStream]) {
                 return YES;
             }
         }
@@ -91,8 +106,8 @@ BOOL DYFSIsLivePreStreamPlayer(id playerController) {
     UIViewController *active = DYFSActiveTopViewController();
     for (NSUInteger depth = 0; active && depth < 20; depth++, active = active.parentViewController) {
         NSString *name = NSStringFromClass(active.class);
-        if ([name containsString:@"AWELiveNewPreStreamViewController"] ||
-            [name containsString:@"AWELivePreStream"]) {
+        if ([name containsString:kDYFSGuardPreStreamVC] ||
+            [name containsString:kDYFSGuardPreStream]) {
             return YES;
         }
     }
@@ -127,9 +142,9 @@ BOOL DYFSIsDetailVideoContext(UIView *view) {
     UIViewController *controller = DYFSFindViewController(view);
     for (NSUInteger depth = 0; controller && depth < 20; depth++, controller = controller.parentViewController) {
         NSString *name = NSStringFromClass(controller.class);
-        if ([name containsString:@"AWEAwemeDetailTableViewController"] ||
-            [name containsString:@"AWEAwemeDetailCellViewController"] ||
-            [name containsString:@"AWEMixVideoPanelDetailTableViewController"]) {
+        if ([name containsString:kDYFSGuardDetailTable] ||
+            [name containsString:kDYFSGuardDetailCell] ||
+            [name containsString:kDYFSGuardMixPanel]) {
             return YES;
         }
     }
@@ -167,7 +182,7 @@ BOOL DYFSIsFeedCellInteractionController(UIViewController *controller) {
 
     id base = DYFSSafeValueForKey(controller, @"awemeBaseViewController");
     NSString *baseName = base ? NSStringFromClass([base class]) : @"";
-    if ([baseName containsString:@"AWEFeedCellViewController"]) return YES;
+    if ([baseName containsString:kDYFSGuardFeedCell]) return YES;
 
     // Some live cards wrap the interaction controller in a different base class.
     // Keep the fallback restricted to an attached feed interaction controller;
@@ -179,7 +194,7 @@ BOOL DYFSIsFeedCellInteractionController(UIViewController *controller) {
     UIViewController *cursor = controller.parentViewController;
     for (NSUInteger depth = 0; cursor && depth < 12; depth++, cursor = cursor.parentViewController) {
         NSString *name = NSStringFromClass(cursor.class);
-        if ([name containsString:@"AWEFeedCellViewController"]) return YES;
+        if ([name containsString:kDYFSGuardFeedCell]) return YES;
     }
 
     return hasLiveSignal && controller.isViewLoaded && controller.view.window != nil &&

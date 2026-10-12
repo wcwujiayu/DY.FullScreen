@@ -85,9 +85,9 @@ static void DYFSApplyTabBarTransparency(UIView *tabBar) {
     if (!tabBar) return;
 
     BOOL enabled = DYFSIsEnabled();
-    Class generalButtonClass = NSClassFromString(@"AWENormalModeTabBarGeneralButton");
-    Class plusButtonClass = NSClassFromString(@"AWENormalModeTabBarGeneralPlusButton");
-    Class barBackgroundClass = NSClassFromString(@"_UIBarBackground");
+    Class generalButtonClass = NSClassFromString(kDYFSClassTabBarGeneralButton);
+    Class plusButtonClass = NSClassFromString(kDYFSClassTabBarGeneralPlusButton);
+    Class barBackgroundClass = NSClassFromString(kDYFSClassBarBackground);
 
     BOOL isHomeSelected = NO;
     for (UIView *subview in [tabBar.subviews copy]) {
@@ -195,19 +195,19 @@ void DYFSPlayerProgressLayout(id self, SEL cmd) {
 
 
 void DYFSChromeInstallHooks(void) {
-    Class cls = NSClassFromString(@"AWEPlayInteractionProgressContainerView");
+    Class cls = NSClassFromString(kDYFSClassInteractionProgress);
     if (cls && !DYFSInstalledInteractionProgress) {
         DYFSInstalledInteractionProgress = DYFSInstallHook(cls, @selector(layoutSubviews),
                     (IMP)DYFSInteractionProgressLayout, &DYFSOriginalInteractionProgressLayout);
     }
 
-    cls = NSClassFromString(@"AWEDPlayerProgressContainerView");
+    cls = NSClassFromString(kDYFSClassPlayerProgress);
     if (cls && !DYFSInstalledPlayerProgress) {
         DYFSInstalledPlayerProgress = DYFSInstallHook(cls, @selector(layoutSubviews),
                     (IMP)DYFSPlayerProgressLayout, &DYFSOriginalPlayerProgressLayout);
     }
 
-    cls = NSClassFromString(@"AWENormalModeTabBar");
+    cls = NSClassFromString(kDYFSClassTabBar);
     if (cls && !DYFSInstalledTabBarLayout) {
         DYFSInstalledTabBarLayout = DYFSInstallHook(cls, @selector(layoutSubviews),
                     (IMP)DYFSTabBarLayout, &DYFSOriginalTabBarLayout);

@@ -17,6 +17,10 @@
 #import "DYFSSettings.h"
 #import "DYLiveFeedFullscreen.h"
 
+// 启动后两次重排：第一次消化初始布局，第二次修正延迟加载的视图
+static const NSTimeInterval kDYFSStartupRelayoutDelayA = 0.20;
+static const NSTimeInterval kDYFSStartupRelayoutDelayB = 0.65;
+
 static void DYFSInstallHooks(void) {
     NSString *bundle = NSBundle.mainBundle.bundleIdentifier ?: @"";
     if (![bundle isEqualToString:DYFSBundleID]) return;
@@ -42,9 +46,9 @@ static void DYFSInstallHooks(void) {
 }
 
 static void DYFSScheduleHooks(void) {
-    if (DYFSSchedulePending || DYFSInstallAttempts >= 60) return;
+    if (DYFSSchedulePending || DYFSInstallAttempts >= kDYFSMaxInstallAttempts) return;
     DYFSSchedulePending = YES;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDYFSInstallRetryInterval * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         DYFSSchedulePending = NO;
         DYFSInstallAttempts++;
@@ -57,15 +61,33 @@ static void DYFSScheduleHooks(void) {
 
         if (!DYFSStartupRelayoutScheduled && layoutInstalled && tabBarInstalled && playerLayoutInstalled) {
             DYFSStartupRelayoutScheduled = YES;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)),
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDYFSStartupRelayoutDelayA * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{ DYFSRequestRelayout(); });
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.65 * NSEC_PER_SEC)),
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDYFSStartupRelayoutDelayB * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{ DYFSRequestRelayout(); });
         }
 
         if ((!layoutInstalled || !sidebarInstalled || !tabBarInstalled || !DYFSInstalledNativeSettingsSwitch ||
-             !playerLayoutInstalled) && DYFSInstallAttempts < 60) {
+             !playerLayoutInstalled) && DYFSInstallAttempts < kDYFSMaxInstallAttempts) {
             DYFSScheduleHooks();
+            return;
+        }
+
+        // 放弃重试前把缺失项一次性打出来，方便定位是哪几个类没找到。
+        if (DYFSInstallAttempts >= kDYFSMaxInstallAttempts &&
+            (!layoutInstalled || !sidebarInstalled || !tabBarInstalled ||
+             !DYFSInstalledNativeSettingsSwitch || !playerLayoutInstalled)) {
+            NSMutableArray *missing = [NSMutableArray array];
+            if (!DYFSInstalledFeed) [missing addObject:@"AWEFeedTableView"];
+            if (!DYFSInstalledStory) [missing addObject:@"AWEStoryContainerCollectionView"];
+            if (!DYFSInstalledInteractionController) [missing addObject:@"AWEPlayInteractionViewController"];
+            if (!DYFSInstalledPlayerContentB && !DYFSInstalledPlayerContentC) [missing addObject:@"player view controller"];
+            if (!DYFSInstalledTabBarLayout || !DYFSInstalledTabBarHidden) [missing addObject:@"AWENormalModeTabBar"];
+            if (!DYFSInstalledSidebarIcon && !DYFSInstalledSidebarRight) [missing addObject:@"sidebar entry"];
+            if (!DYFSInstalledNativeSettingsSwitch) [missing addObject:@"AWESettingsTableViewController"];
+            DYFSLog([NSString stringWithFormat:@"gave up after %lu attempts; missing: %@",
+                     (unsigned long)DYFSInstallAttempts,
+                     missing.count ? [missing componentsJoinedByString:@", "] : @"(unknown)"]);
         }
     });
 }
