@@ -16,6 +16,53 @@
 static IMP DYFSOriginalLiveFeedCellLayout = NULL;
 static BOOL DYFSInstalledLiveFeedCellLayout = NO;
 
+// 判断子视图是否承载了可见内容（账号、文案、按钮等）。
+// 纯视频层 / 背景层没有文字也没有控件，返回 NO，避免被误移。
+static BOOL DYFSLiveCardSubtreeHasContent(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+    if ([view isKindOfClass:UIControl.class]) return YES;
+    if ([view isKindOfClass:UIButton.class]) return YES;
+    if ([view isKindOfClass:UITextField.class]) return YES;
+    if ([view isKindOfClass:UILabel.class]) {
+        UILabel *label = (UILabel *)view;
+        if (label.text.length > 0 || label.attributedText.length > 0) return YES;
+    }
+    for (UIView *sub in view.subviews) {
+        if (DYFSLiveCardSubtreeHasContent(sub, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+// 信息流直播卡片里的账号、文案与「进入直播间」按钮不需要居中，
+// 而是应该停在底栏上方：把底部越过底栏的内容视图上移回去。
+// fullHeight 用卡片（cell）的高度而不是观众视图自身高度，
+// 因为观众视图可能尚未被撑满。
+static void DYFSKeepLiveCardContentAboveTabBar(UIView *container, CGFloat tabBarHeight, CGFloat fullHeight) {
+    if (!container || tabBarHeight <= 0 || fullHeight <= 0) return;
+    CGFloat limitY = fullHeight - tabBarHeight;
+    if (limitY <= 0) return;
+
+    CGFloat cw = CGRectGetWidth(container.bounds);
+    CGFloat ch = CGRectGetHeight(container.bounds);
+
+    for (UIView *sub in [container.subviews copy]) {
+        if (sub.hidden || sub.alpha <= 0.01) continue;
+
+        CGFloat sw = CGRectGetWidth(sub.frame), sh = CGRectGetHeight(sub.frame);
+        // 铺满容器的多半是视频层或背景层，不参与上移。
+        if (cw > 0 && ch > 0 && sw >= cw * 0.95 && sh >= ch * 0.90) continue;
+        if (!DYFSLiveCardSubtreeHasContent(sub, 0)) continue;
+
+        CGFloat delta = CGRectGetMaxY(sub.frame) - limitY;
+        if (delta <= 1.0) continue;
+
+        CGRect frame = sub.frame;
+        frame.origin.y -= delta;
+        if (CGRectGetMinY(frame) < -1.0) continue;   // 别把它顶出屏幕外
+        sub.frame = frame;
+    }
+}
+
 static BOOL DYFSIsPreStreamView(UIView *view) {
     for (UIView *cursor = view; cursor; cursor = cursor.superview) {
         NSString *name = NSStringFromClass(cursor.class);
@@ -105,11 +152,15 @@ static BOOL DYFSIsPreStreamView(UIView *view) {
         return;
     }
 
-    if (fabs(currentHeight - targetHeight) <= 0.5) return;
+    if (fabs(currentHeight - targetHeight) > 0.5) {
+        CGRect frame = controllerView.frame;
+        frame.size.height = targetHeight;
+        controllerView.frame = frame;
+    }
 
-    CGRect frame = controllerView.frame;
-    frame.size.height = targetHeight;
-    controllerView.frame = frame;
+    // 高度补偿之后，再把账号 / 文案 / 按钮顶到底栏上方。
+    DYFSKeepLiveCardContentAboveTabBar(controllerView, tabBarHeight, cellHeight);
+
     [controllerView setNeedsLayout];
     [controllerView layoutIfNeeded];
 }
