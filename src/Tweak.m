@@ -28,10 +28,10 @@ static void DYFSInstallHooks(void) {
     DYFSChromeInstallHooks();
     DYFSSettingsInstallHooks();
 
-    NSString *summary = [NSString stringWithFormat:@"video-list %@; story-container %@; interaction-controller %@; setFrame %@; sidebar hooks %lu/2; tab bar hooks %lu/2; settings-switch %@",
+    NSString *summary = [NSString stringWithFormat:@"video-list %@; story-container %@; interaction-controller %@; player-content %d/3; sidebar hooks %lu/2; tab bar hooks %lu/2; settings-switch %@",
                          DYFSInstalledFeed ? @"on" : @"off", DYFSInstalledStory ? @"on" : @"off",
                          DYFSInstalledInteractionController ? @"on" : @"off",
-                         DYFSInstalledSetFrameHook ? @"on" : @"off",
+                         (int)DYFSInstalledPlayerContentA + (int)DYFSInstalledPlayerContentB + (int)DYFSInstalledPlayerContentC,
                          (unsigned long)DYFSSidebarHookCount(), (unsigned long)DYFSTabBarHookCount(),
                          DYFSInstalledNativeSettingsSwitch ? @"on" : @"off"];
     if (![summary isEqualToString:DYFSLastInstallSummary]) {
@@ -52,9 +52,9 @@ static void DYFSScheduleHooks(void) {
         BOOL layoutInstalled = DYFSInstalledFeed && DYFSInstalledStory && DYFSInstalledInteractionController;
         BOOL sidebarInstalled = DYFSInstalledSidebarIcon || DYFSInstalledSidebarRight;
         BOOL tabBarInstalled = DYFSInstalledTabBarLayout && DYFSInstalledTabBarHidden;
-        BOOL sizingInstalled = DYFSInstalledSetFrameHook;
+        BOOL playerLayoutInstalled = DYFSInstalledPlayerContentB || DYFSInstalledPlayerContentC;
 
-        if (!DYFSStartupRelayoutScheduled && layoutInstalled && tabBarInstalled && sizingInstalled) {
+        if (!DYFSStartupRelayoutScheduled && layoutInstalled && tabBarInstalled && playerLayoutInstalled) {
             DYFSStartupRelayoutScheduled = YES;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDYFSStartupRelayoutDelayA * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{ DYFSRequestRelayout(); });
@@ -63,7 +63,7 @@ static void DYFSScheduleHooks(void) {
         }
 
         if ((!layoutInstalled || !sidebarInstalled || !tabBarInstalled || !DYFSInstalledNativeSettingsSwitch ||
-             !sizingInstalled) && DYFSInstallAttempts < kDYFSMaxInstallAttempts) {
+             !playerLayoutInstalled) && DYFSInstallAttempts < kDYFSMaxInstallAttempts) {
             DYFSScheduleHooks();
             return;
         }
@@ -71,12 +71,12 @@ static void DYFSScheduleHooks(void) {
         // 放弃重试前把缺失项一次性打出来，方便定位是哪几个类没找到。
         if (DYFSInstallAttempts >= kDYFSMaxInstallAttempts &&
             (!layoutInstalled || !sidebarInstalled || !tabBarInstalled ||
-             !DYFSInstalledNativeSettingsSwitch || !sizingInstalled)) {
+             !DYFSInstalledNativeSettingsSwitch || !playerLayoutInstalled)) {
             NSMutableArray *missing = [NSMutableArray array];
             if (!DYFSInstalledFeed) [missing addObject:@"AWEFeedTableView"];
             if (!DYFSInstalledStory) [missing addObject:@"AWEStoryContainerCollectionView"];
             if (!DYFSInstalledInteractionController) [missing addObject:@"AWEPlayInteractionViewController"];
-            if (!DYFSInstalledSetFrameHook) [missing addObject:@"UIView setFrame hook"];
+            if (!DYFSInstalledPlayerContentB && !DYFSInstalledPlayerContentC) [missing addObject:@"player view controller"];
             if (!DYFSInstalledTabBarLayout || !DYFSInstalledTabBarHidden) [missing addObject:@"AWENormalModeTabBar"];
             if (!DYFSInstalledSidebarIcon && !DYFSInstalledSidebarRight) [missing addObject:@"sidebar entry"];
             if (!DYFSInstalledNativeSettingsSwitch) [missing addObject:@"AWESettingsTableViewController"];
