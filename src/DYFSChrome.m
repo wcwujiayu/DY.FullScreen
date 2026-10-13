@@ -201,38 +201,23 @@ static void DYFSLiveAudienceLayoutAWE(id self, SEL cmd) {
     DYFSLiveAudienceLift(self, cmd);
 }
 
-static void DYFSApplyTabBarTransparency(UIView *tabBar) {
-    if (!tabBar) return;
-
-    BOOL enabled = DYFSIsEnabled();
-
-    // 与 DYYY（DYYY.xm 15100+）一致的底栏类名集合。
-    Class generalButtonClass = NSClassFromString(kDYFSClassTabBarGeneralButton);
-    Class plusButtonClass = NSClassFromString(kDYFSClassTabBarGeneralPlusButton);
-    Class plusContainerClass = NSClassFromString(kDYFSClassTabBarPlusButton);
-    Class plusInnerClass = NSClassFromString(@"AWENormalModeTabBarGeneralPlusInnerButton");
-    Class barBackgroundClass = NSClassFromString(kDYFSClassBarBackground);   // _UIBarBackground
-    Class tabBarButtonClass = NSClassFromString(@"UITabBarButton");
-
-    id skinContainer = DYFSSafeValueForKey(tabBar, @"skinContainerView");
-    if ([skinContainer isKindOfClass:UIView.class]) {
-        ((UIView *)skinContainer).hidden = enabled;
-    }
-
-    // 部分版本直接把底色刷在底栏自身或它的 layer 上，这里一并清掉。
-    if (enabled) {
-        tabBar.backgroundColor = UIColor.clearColor;
-        if (tabBar.layer) tabBar.layer.backgroundColor = UIColor.clearColor.CGColor;
-        tabBar.opaque = NO;
-    }
+// 复刻 DYYY（DYYY.xm 15100+）的判定：递归遍历底栏全部子视图，跳过按钮，
+// 把「_UIBarBackground / 纯 UIView 且高度匹配底栏」的背景与细分割线一并隐藏。
+// 递归是因为真正的黑底 AWETabBarSkinView 常藏在 skinContainerView 内部，
+// 只遍历一层 subviews 会漏掉它。
+static void DYFSApplyTabBarTransparencyRecursively(UIView *container, UIView *tabBar, BOOL enabled,
+                                                   Class generalButtonClass, Class plusButtonClass,
+                                                   Class plusContainerClass, Class plusInnerClass,
+                                                   Class barBackgroundClass, Class tabBarButtonClass,
+                                                   NSUInteger depth) {
+    if (!container || depth > 12) return;
 
     CGFloat barHeight = CGRectGetHeight(tabBar.bounds);
     if (barHeight <= 0.0 || !isfinite(barHeight)) {
         barHeight = 49.0 + MAX(0.0, tabBar.window.safeAreaInsets.bottom);
     }
 
-    // 单次遍历：隐藏全部背景与分割线，跳过按钮（DYYY 同款判定）。
-    for (UIView *subview in [tabBar.subviews copy]) {
+    for (UIView *subview in [container.subviews copy]) {
         if (generalButtonClass && [subview isKindOfClass:generalButtonClass]) continue;
         if (plusButtonClass && [subview isKindOfClass:plusButtonClass]) continue;
         if (plusContainerClass && [subview isKindOfClass:plusContainerClass]) continue;
@@ -255,12 +240,46 @@ static void DYFSApplyTabBarTransparency(UIView *tabBar) {
             subview.hidden = NO;
         }
 
-        // 顶部细分割线
         if (CGRectGetHeight(subview.bounds) > 0 && CGRectGetHeight(subview.bounds) < 1.0 &&
             CGRectGetWidth(subview.bounds) > 300.0) {
             subview.hidden = enabled;
         }
+
+        DYFSApplyTabBarTransparencyRecursively(subview, tabBar, enabled,
+                                               generalButtonClass, plusButtonClass, plusContainerClass,
+                                               plusInnerClass, barBackgroundClass, tabBarButtonClass,
+                                               depth + 1);
     }
+}
+
+static void DYFSApplyTabBarTransparency(UIView *tabBar) {
+    if (!tabBar) return;
+
+    BOOL enabled = DYFSIsEnabled();
+
+    Class generalButtonClass = NSClassFromString(kDYFSClassTabBarGeneralButton);
+    Class plusButtonClass = NSClassFromString(kDYFSClassTabBarGeneralPlusButton);
+    Class plusContainerClass = NSClassFromString(kDYFSClassTabBarPlusButton);
+    Class plusInnerClass = NSClassFromString(@"AWENormalModeTabBarGeneralPlusInnerButton");
+    Class barBackgroundClass = NSClassFromString(kDYFSClassBarBackground);   // _UIBarBackground
+    Class tabBarButtonClass = NSClassFromString(@"UITabBarButton");
+
+    // 隐藏整块皮肤容器（DYYY 同款）。
+    id skinContainer = DYFSSafeValueForKey(tabBar, @"skinContainerView");
+    if ([skinContainer isKindOfClass:UIView.class]) {
+        ((UIView *)skinContainer).hidden = enabled;
+    }
+
+    // 部分版本把底色直接刷在底栏自身或 layer 上，一并清掉。
+    if (enabled) {
+        tabBar.backgroundColor = UIColor.clearColor;
+        if (tabBar.layer) tabBar.layer.backgroundColor = UIColor.clearColor.CGColor;
+        tabBar.opaque = NO;
+    }
+
+    DYFSApplyTabBarTransparencyRecursively(tabBar, tabBar, enabled,
+                                           generalButtonClass, plusButtonClass, plusContainerClass,
+                                           plusInnerClass, barBackgroundClass, tabBarButtonClass, 0);
 
     DYFSLastTabBackgroundHidden = enabled;
     DYFSTabBarApplyCount++;
