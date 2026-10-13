@@ -252,7 +252,19 @@ static void DYFSApplyCardTransparency(UIView *root, UIView *reference) {
 // skinContainerView 处理，因此能稳定命中抖音 40.7.0 的底栏结构。
 static void DYFSClearTabBarBackgrounds(UIView *root) {
     if (!root) return;
-    UIView *tabBar = DYFSFindSubviewOfClass(root, kDYFSClassTabBar, 0);
+    // 子类感知查找：exact 类名匹配（DYFSFindSubviewOfClass）会漏掉被继承的底栏类。
+    UIView *tabBar = nil;
+    Class tabBarClass = NSClassFromString(kDYFSClassTabBar);
+    if (tabBarClass) {
+        NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
+        while (pending.count > 0) {
+            UIView *view = pending.lastObject;
+            [pending removeLastObject];
+            if ([view isKindOfClass:tabBarClass]) { tabBar = view; break; }
+            [pending addObjectsFromArray:view.subviews];
+        }
+    }
+    if (!tabBar) tabBar = DYFSFindSubviewOfClass(root, kDYFSClassTabBar, 0);
     if (!tabBar) return;
 
     id skin = DYFSSafeValueForKey(tabBar, @"skinContainerView");
