@@ -115,11 +115,10 @@ void DYFSStoryContainerLayout(id self, SEL cmd) {
     }
 }
 
-// 复刻 DYYY 的核心逻辑：在 AWEPlayInteractionViewController 的 -viewDidLayoutSubviews
-// 里直接把互动层高度限制为「父高 − 底栏高」（普通场景），让账号/文案/点赞区停在
-// 透明底栏上方。DYYY 不在这里做任何「是不是 feed 卡片」之类的自定义判定，只保留
-// 极少量保护分支，因此我们之前那套 DYFSIsFeedCellInteractionController 之类的判断
-// 在 40.7.0 上全失败、导致整段高度修正被 return 掉——这正是「依然无效果」的根因。
+// 只对信息流直播卡片生效：把互动层高度限制为「父高 − 底栏高」，
+// 让账号/文案/进入直播间按钮停在透明底栏上方。
+// 普通视频（推荐页、我-喜欢、收藏、详情页等）一律不干预，
+// 避免把点赞/评论/分享区压到错误位置。
 void DYFSInteractionControllerLayout(id self, SEL cmd) {
     if (DYFSOriginalInteractionControllerLayout) {
         ((void (*)(id, SEL))DYFSOriginalInteractionControllerLayout)(self, cmd);
@@ -128,14 +127,15 @@ void DYFSInteractionControllerLayout(id self, SEL cmd) {
 
     UIViewController *controller = (UIViewController *)self;
     UIView *view = controller.view;
-    DYFSTransparencyApplyInView(view);
-    if (view && view.superview) DYFSTransparencyApplyInView(view.superview);
     if (!view || !view.superview || !view.window) return;
+
+    // 关键判定：只在直播信息流卡片内生效
+    if (!DYFSViewIsInsideLiveFeedCell(view)) return;
 
     UIWindow *keyWindow = view.window;
     if (keyWindow && keyWindow.safeAreaInsets.bottom == 0) return;
 
-    // 远程投屏这类场景不处理（与 DYYY 一致）。
+    // 远程投屏这类场景不处理。
     UIViewController *parentVC = controller.parentViewController;
     int count = 0;
     while (parentVC && count < 3) {
@@ -147,29 +147,9 @@ void DYFSInteractionControllerLayout(id self, SEL cmd) {
     }
 
     CGRect frame = view.frame;
-    CGFloat screenWidth = CGRectGetWidth(UIScreen.mainScreen.bounds);
     CGFloat superviewHeight = CGRectGetHeight(view.superview.bounds);
-    if (frame.size.width != screenWidth && CGRectGetHeight(frame) < superviewHeight) {
-        return;
-    }
-
-    // 部分 refer 场景（搜索、挑战、朋友动态等）需要互动层也铺满全高；
-    // 普通信息流则只给「屏高 − 底栏高」，把文案压到底栏上方。
-    NSString *referString = DYFSSafeValueForKey(controller, @"referString");
-    BOOL useFullHeight = (referString == nil);
-    NSArray<NSString *> *fullHeightRefers = @[
-        @"general_search", @"search_result", @"search_ecommerce",
-        @"close_friends_moment", @"offline_mode", @"challenge",
-        @"general_search_scan"
-    ];
-    if (!useFullHeight) {
-        for (NSString *r in fullHeightRefers) {
-            if ([referString isEqualToString:r]) { useFullHeight = YES; break; }
-        }
-    }
-
     CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
-    CGFloat targetHeight = useFullHeight ? superviewHeight : (superviewHeight - tabBarHeight);
+    CGFloat targetHeight = superviewHeight - tabBarHeight;
     if (!isfinite(targetHeight) || targetHeight <= 1.0) return;
 
     if (fabs(targetHeight - CGRectGetHeight(frame)) > 0.5) {
@@ -178,8 +158,8 @@ void DYFSInteractionControllerLayout(id self, SEL cmd) {
         view.frame = frame;
         DYFSInteractionContainerAdjustCount++;
         DYFSLog([NSString stringWithFormat:
-            @"interaction controller height %.2f -> %.2f (parent %.2f, tab bar %.2f, full=%d)",
-            oldHeight, targetHeight, superviewHeight, tabBarHeight, useFullHeight]);
+            @"live-card interaction height %.2f -> %.2f (parent %.2f, tab bar %.2f)",
+            oldHeight, targetHeight, superviewHeight, tabBarHeight]);
     }
 }
 
@@ -391,7 +371,8 @@ static void DYFSUIViewSetFrame(id self, SEL cmd, CGRect frame) {
             CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
             if (tabBarHeight > 0 && fabs(diff - tabBarHeight) < 1.0) {
                 UIViewController *vc = DYFSFindViewController(view);
-                if (DYFSIsPlayerViewController(vc)) {
+                // 关键：只在直播信息流卡片内部才补高，普通视频一律不动
+                if (DYFSIsPlayerViewController(vc) && DYFSViewIsInsideLiveFeedCell(view)) {
                     frame.size.height = superH;   // 只补高度，origin 不动
                     DYFSSetFrameLiftCount++;
                 }
