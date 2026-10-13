@@ -115,38 +115,72 @@ void DYFSStoryContainerLayout(id self, SEL cmd) {
     }
 }
 
+// 复刻 DYYY 的核心逻辑：在 AWEPlayInteractionViewController 的 -viewDidLayoutSubviews
+// 里直接把互动层高度限制为「父高 − 底栏高」（普通场景），让账号/文案/点赞区停在
+// 透明底栏上方。DYYY 不在这里做任何「是不是 feed 卡片」之类的自定义判定，只保留
+// 极少量保护分支，因此我们之前那套 DYFSIsFeedCellInteractionController 之类的判断
+// 在 40.7.0 上全失败、导致整段高度修正被 return 掉——这正是「依然无效果」的根因。
 void DYFSInteractionControllerLayout(id self, SEL cmd) {
     if (DYFSOriginalInteractionControllerLayout) {
         ((void (*)(id, SEL))DYFSOriginalInteractionControllerLayout)(self, cmd);
     }
     if (!DYFSIsEnabled()) return;
+
     UIViewController *controller = (UIViewController *)self;
     UIView *view = controller.view;
     DYFSTransparencyApplyInView(view);
     if (view && view.superview) DYFSTransparencyApplyInView(view.superview);
-    if (!view || !view.superview || DYFSInProfileContext(view) || DYFSIsActualLiveRoomContext(view) || DYFSIsLivePreStreamContext(view) || DYFSIsLivePreStreamPlayer(controller)) return;
-    if (!DYFSIsFeedCellInteractionController(controller)) return;
+    if (!view || !view.superview || !view.window) return;
 
-    UIView *parent = view.superview;
-    CGFloat parentHeight = CGRectGetHeight(parent.bounds);
-    CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
-    CGFloat targetHeight = parentHeight - tabBarHeight;
+    UIWindow *keyWindow = view.window;
+    if (keyWindow && keyWindow.safeAreaInsets.bottom == 0) return;
+
+    // 远程投屏这类场景不处理（与 DYYY 一致）。
+    UIViewController *parentVC = controller.parentViewController;
+    int count = 0;
+    while (parentVC && count < 3) {
+        if ([NSStringFromClass(parentVC.class) containsString:@"AFDPlayRemoteFeedTableViewController"]) {
+            return;
+        }
+        parentVC = parentVC.parentViewController;
+        count++;
+    }
+
     CGRect frame = view.frame;
     CGFloat screenWidth = CGRectGetWidth(UIScreen.mainScreen.bounds);
-
-    if (!isfinite(targetHeight) || targetHeight <= 1.0 ||
-        (fabs(CGRectGetWidth(frame) - screenWidth) > 1.0 && CGRectGetHeight(frame) < parentHeight)) {
+    CGFloat superviewHeight = CGRectGetHeight(view.superview.bounds);
+    if (frame.size.width != screenWidth && CGRectGetHeight(frame) < superviewHeight) {
         return;
     }
-    if (fabs(CGRectGetHeight(frame) - targetHeight) <= 0.5) return;
 
-    CGFloat oldHeight = CGRectGetHeight(frame);
-    frame.size.height = targetHeight;
-    view.frame = frame;
-    DYFSInteractionContainerAdjustCount++;
-    DYFSLog([NSString stringWithFormat:
-        @"interaction controller height %.2f -> %.2f (parent %.2f, tab bar %.2f)",
-        oldHeight, targetHeight, parentHeight, tabBarHeight]);
+    // 部分 refer 场景（搜索、挑战、朋友动态等）需要互动层也铺满全高；
+    // 普通信息流则只给「屏高 − 底栏高」，把文案压到底栏上方。
+    NSString *referString = DYFSSafeValueForKey(controller, @"referString");
+    BOOL useFullHeight = (referString == nil);
+    NSArray<NSString *> *fullHeightRefers = @[
+        @"general_search", @"search_result", @"search_ecommerce",
+        @"close_friends_moment", @"offline_mode", @"challenge",
+        @"general_search_scan"
+    ];
+    if (!useFullHeight) {
+        for (NSString *r in fullHeightRefers) {
+            if ([referString isEqualToString:r]) { useFullHeight = YES; break; }
+        }
+    }
+
+    CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
+    CGFloat targetHeight = useFullHeight ? superviewHeight : (superviewHeight - tabBarHeight);
+    if (!isfinite(targetHeight) || targetHeight <= 1.0) return;
+
+    if (fabs(targetHeight - CGRectGetHeight(frame)) > 0.5) {
+        CGFloat oldHeight = CGRectGetHeight(frame);
+        frame.size.height = targetHeight;
+        view.frame = frame;
+        DYFSInteractionContainerAdjustCount++;
+        DYFSLog([NSString stringWithFormat:
+            @"interaction controller height %.2f -> %.2f (parent %.2f, tab bar %.2f, full=%d)",
+            oldHeight, targetHeight, superviewHeight, tabBarHeight, useFullHeight]);
+    }
 }
 
 static void DYFSApplyPlayerContentHeightNow(id playerController) {
@@ -339,22 +373,6 @@ static BOOL DYFSIsPlayerViewController(UIViewController *vc) {
            (playClassC && [vc isKindOfClass:playClassC]);
 }
 
-// 只补「纯画面」视图：文章类 / 图文里带文字和按钮的容器被补高后，底部锚定的
-// 「阅读文章」之类的按钮会跟着沉到底栏里，所以命中几何条件后还要确认这棵子树
-// 里没有文字和控件。
-static BOOL DYFSSubtreeHasTextOrControl(UIView *view, NSUInteger depth) {
-    if (!view || depth > 6) return NO;
-    if ([view isKindOfClass:UIControl.class]) return YES;
-    if ([view isKindOfClass:UILabel.class]) {
-        UILabel *label = (UILabel *)view;
-        if (label.text.length > 0 || label.attributedText.length > 0) return YES;
-    }
-    for (UIView *subview in view.subviews) {
-        if (DYFSSubtreeHasTextOrControl(subview, depth + 1)) return YES;
-    }
-    return NO;
-}
-
 static void DYFSUIViewSetFrame(id self, SEL cmd, CGRect frame) {
     if (!DYFSOriginalSetFrame) return;
 
@@ -364,15 +382,16 @@ static void DYFSUIViewSetFrame(id self, SEL cmd, CGRect frame) {
         CGFloat superH = CGRectGetHeight(superview.frame);
         CGFloat height = CGRectGetHeight(frame);
 
-        // 先做最便宜的几何判断，避免每次 setFrame 都回溯响应链。
-        // 与 DYYY 一致：只处理没有位移、且高度差刚好一个底栏的情况。
+        // 与 DYYY 完全一致：只处理没有位移、且高度差刚好一个底栏的播放器 view。
+        // 注意：播放器根 view 内部本来就含 UILabel（时长/标题等），因此
+        // 「子树有文字就不补」的判断必须去掉——否则补高永远被拦掉。
         if (superview && superH > 0 && height > 0 && height < superH &&
             frame.origin.x == 0 && frame.origin.y == 0) {
             CGFloat diff = superH - height;
             CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
             if (tabBarHeight > 0 && fabs(diff - tabBarHeight) < 1.0) {
                 UIViewController *vc = DYFSFindViewController(view);
-                if (DYFSIsPlayerViewController(vc) && !DYFSSubtreeHasTextOrControl(view, 0)) {
+                if (DYFSIsPlayerViewController(vc)) {
                     frame.size.height = superH;   // 只补高度，origin 不动
                     DYFSSetFrameLiftCount++;
                 }
