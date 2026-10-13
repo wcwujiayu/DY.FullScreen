@@ -179,7 +179,7 @@ static void DYFSSchedulePlayerContentHeight(id playerController) {
 
     objc_setAssociatedObject(playerController, &kDYFSPlayerLayoutPendingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     __weak id weakController = playerController;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.18 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDYFSPlayerSettleDelay * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         id strongController = weakController;
         if (!strongController) return;
