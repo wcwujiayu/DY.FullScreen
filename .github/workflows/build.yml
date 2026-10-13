@@ -2,7 +2,10 @@ name: Build DY.FullScreen
 
 on:
   push:
-    branches: [main]
+    # 'refactor/**' lets a feature branch produce its own dylib from Actions
+    # artifacts without publishing it to main. Remove this line if you only
+    # ever want main and tags to build.
+    branches: [main, 'refactor/**']
     tags: ['v*']
   workflow_dispatch:
 
@@ -10,9 +13,20 @@ permissions:
   contents: write
 
 jobs:
+  static-checks:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Run repository static checks
+        run: bash .github/scripts/static-checks.sh
+
   build:
     name: Build rootful, rootless, roothide and dylib
     runs-on: macos-latest
+    needs: static-checks
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -32,8 +46,25 @@ jobs:
       - name: Prepare output folders
         run: rm -rf packages dist && mkdir -p packages dist
 
+      # Single source of truth: the version comes from control only. Previously
+      # the file names below hard-coded it, so bumping control silently broke
+      # the mv steps with "Expected one package, got 0".
+      - name: Read package version
+        id: pkgver
+        run: |
+          set -euo pipefail
+          version="$(awk '/^Version:/ {print $2; exit}' control)"
+          if [ -z "$version" ]; then
+            echo "无法从 control 文件读取 Version 字段" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Package version: $version"
+
       - name: Build rootful package
         shell: bash
+        env:
+          VERSION: ${{ steps.pkgver.outputs.version }}
         run: |
           set -euo pipefail
           rm -rf packages && mkdir -p packages
@@ -41,10 +72,12 @@ jobs:
           shopt -s nullglob
           files=(packages/*.deb)
           if [ "${#files[@]}" -ne 1 ]; then echo "Expected one rootful package, got ${#files[@]}" >&2; exit 1; fi
-          mv "${files[0]}" dist/com.dy.fullscreen_0.3.19_iphoneos-arm-rootful.deb
+          mv "${files[0]}" "dist/com.dy.fullscreen_${VERSION}_iphoneos-arm-rootful.deb"
 
       - name: Build rootless package
         shell: bash
+        env:
+          VERSION: ${{ steps.pkgver.outputs.version }}
         run: |
           set -euo pipefail
           rm -rf packages .theos && mkdir -p packages
@@ -52,10 +85,12 @@ jobs:
           shopt -s nullglob
           files=(packages/*.deb)
           if [ "${#files[@]}" -ne 1 ]; then echo "Expected one rootless package, got ${#files[@]}" >&2; exit 1; fi
-          mv "${files[0]}" dist/com.dy.fullscreen_0.3.19_iphoneos-arm64-rootless.deb
+          mv "${files[0]}" "dist/com.dy.fullscreen_${VERSION}_iphoneos-arm64-rootless.deb"
 
       - name: Build roothide package
         shell: bash
+        env:
+          VERSION: ${{ steps.pkgver.outputs.version }}
         run: |
           set -euo pipefail
           rm -rf packages .theos && mkdir -p packages
@@ -63,25 +98,34 @@ jobs:
           shopt -s nullglob
           files=(packages/*.deb)
           if [ "${#files[@]}" -ne 1 ]; then echo "Expected one roothide package, got ${#files[@]}" >&2; exit 1; fi
-          mv "${files[0]}" dist/com.dy.fullscreen_0.3.19_iphoneos-arm64e-roothide.deb
+          mv "${files[0]}" "dist/com.dy.fullscreen_${VERSION}_iphoneos-arm64e-roothide.deb"
 
       - name: Export dylib and checksums
         shell: bash
+        env:
+          VERSION: ${{ steps.pkgver.outputs.version }}
         run: |
           set -euo pipefail
+          # Locate the rootless package by pattern instead of a hard-coded name.
+          rootless_deb="$(find dist -type f -name '*_iphoneos-arm64-rootless.deb' -print -quit)"
+          if [[ -z "$rootless_deb" ]]; then
+            echo "rootless package not found in dist" >&2
+            ls -lah dist >&2 || true
+            exit 1
+          fi
           stage="$RUNNER_TEMP/dy-fullscreen-rootless"
           rm -rf "$stage" && mkdir -p "$stage"
-          dpkg-deb -x dist/com.dy.fullscreen_0.3.19_iphoneos-arm64-rootless.deb "$stage"
+          dpkg-deb -x "$rootless_deb" "$stage"
           dylib="$(find "$stage" -type f -name 'DY.FullScreen.dylib' -print -quit)"
           if [[ -z "$dylib" ]]; then
             echo "DY.FullScreen.dylib not found inside rootless package" >&2
             find "$stage" -type f -print >&2 || true
             exit 1
           fi
-          cp "$dylib" dist/DY.FullScreen_0.3.19.dylib
-          cp "$dylib" dist/DY.FullScreen.dylib
-          (cd dist && zip -q -j DY.FullScreen-0.3.19-TrollFools.zip DY.FullScreen.dylib)
-          (cd dist && shasum -a 256 *.deb *.dylib *.zip > SHA256SUMS.txt)
+          # 只保留带版本号的 dylib：无版本号副本与 TrollFools zip 容易与
+          # 其他版本混淆，已按维护者要求移除。
+          cp "$dylib" "dist/DY.FullScreen_${VERSION}.dylib"
+          (cd dist && shasum -a 256 *.deb *.dylib > SHA256SUMS.txt)
           ls -lah dist
 
       - name: Upload build artifacts
