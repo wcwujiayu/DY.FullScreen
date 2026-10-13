@@ -17,23 +17,28 @@ extern NSString * const DYFSSettingsTitle;
 extern BOOL DYFSInstalledFeed;
 extern BOOL DYFSInstalledStory;
 extern BOOL DYFSInstalledInteractionController;
+extern BOOL DYFSInstalledElementStack;
 extern BOOL DYFSInstalledPlayerContentA;
 extern BOOL DYFSInstalledPlayerContentB;
 extern BOOL DYFSInstalledPlayerContentC;
-extern BOOL DYFSInstalledSidebarIcon;
-extern BOOL DYFSInstalledSidebarRight;
 extern BOOL DYFSInstalledTabBarLayout;
 extern BOOL DYFSInstalledTabBarHidden;
 extern BOOL DYFSInstalledTabBarDidMove;
 extern BOOL DYFSInstalledTabBarDidAddSubview;
 extern BOOL DYFSInstalledInteractionProgress;
 extern BOOL DYFSInstalledPlayerProgress;
+extern BOOL DYFSInstalledCommentPanel;
+extern BOOL DYFSInstalledCommentInputContainer;
+extern BOOL DYFSInstalledCommentInputBackground;
+extern BOOL DYFSInstalledCommentInputController;
+extern BOOL DYFSInstalledDetailTable;
+extern BOOL DYFSInstalledDetailCell;
+extern BOOL DYFSInstalledMixPanelDetail;
 extern BOOL DYFSInstalledNativeSettingsSwitch;
 extern BOOL DYFSNativeSettingsRowAdded;
 extern BOOL DYFSStartupRelayoutScheduled;
 extern BOOL DYFSSchedulePending;
 extern NSUInteger DYFSInstallAttempts;
-extern BOOL DYFSSettingsEntryVisible;
 extern BOOL DYFSVersionMismatch;
 extern NSString *DYFSLastInstallSummary;
 
@@ -41,13 +46,9 @@ extern NSString *DYFSLastInstallSummary;
 extern NSUInteger DYFSLayoutFixCount;
 extern NSUInteger DYFSInteractionContainerAdjustCount;
 extern NSUInteger DYFSPlayerContentAdjustCount;
-extern NSUInteger DYFSLivePreviewPlayerAdjustCount;
 extern NSUInteger DYFSTabBarApplyCount;
-extern NSUInteger DYFSLiveCardLiftCount;
-extern NSUInteger DYFSLiveCardProcessCount;
-extern NSUInteger DYFSSetFrameLiftCount;
 extern NSUInteger DYFSBottomChromeHideCount;
-extern BOOL DYFSLiveCardHookInstalled;
+extern NSUInteger DYFSCommentBarTransparencyApplyCount;
 extern BOOL DYFSLastHomeTabSelected;
 extern BOOL DYFSLastTabBackgroundHidden;
 
@@ -62,8 +63,6 @@ extern NSString * const kDYFSClassPlayInteraction;   // AWEPlayInteractionViewCo
 extern NSString * const kDYFSClassPlayVideoA;   // AWEAwemePlayVideoViewController
 extern NSString * const kDYFSClassPlayVideoB;   // AWEDPlayerFeedPlayerViewController
 extern NSString * const kDYFSClassPlayVideoC;   // AWEDPlayerViewController_Merge
-extern NSString * const kDYFSClassSidebarIcon;   // AWELeftSideBarTopIconHorizontalView
-extern NSString * const kDYFSClassSidebarRight;   // AWELeftSideBarTopRightLayoutView
 extern NSString * const kDYFSClassInteractionProgress;   // AWEPlayInteractionProgressContainerView
 extern NSString * const kDYFSClassPlayerProgress;   // AWEDPlayerProgressContainerView
 extern NSString * const kDYFSClassTabBar;   // AWENormalModeTabBar
@@ -73,11 +72,15 @@ extern NSString * const kDYFSClassTabBarPlusButton;   // AWENormalModeTabBarPlus
 extern NSString * const kDYFSClassSettings;   // AWESettingsTableViewController
 extern NSString * const kDYFSClassSettingItemModel;   // AWESettingItemModel
 extern NSString * const kDYFSClassSettingSectionModel;   // AWESettingSectionModel
-extern NSString * const kDYFSClassLiveFeedCell;   // IESLiveInnerFeedLiveRoomCell
 extern NSString * const kDYFSClassBarBackground;   // _UIBarBackground
 extern NSString * const kDYFSClassDetailTable;   // AWEAwemeDetailTableViewController
 extern NSString * const kDYFSClassDetailCell;   // AWEAwemeDetailCellViewController
 extern NSString * const kDYFSClassMixPanel;   // AWEMixVideoPanelDetailTableViewController
+extern NSString * const kDYFSClassElementStack;   // AWEElementStackView
+extern NSString * const kDYFSClassCommentPanel;   // AWECommentPanelContainerSwiftImpl.CommentContainerInnerViewController
+extern NSString * const kDYFSClassCommentInputContainer;   // AWECommentInputViewSwiftImpl.CommentInputContainerView
+extern NSString * const kDYFSClassCommentInputBackground;   // AWECommentInputBackgroundView
+extern NSString * const kDYFSClassCommentInputController;   // AWECommentInputViewController
 
 // 安装调度
 extern const NSUInteger kDYFSMaxInstallAttempts;      // 最多重试次数
@@ -92,5 +95,17 @@ UIViewController *DYFSFindViewController(UIView *view);
 UIViewController *DYFSActiveTopViewController(void);
 UIView *DYFSFindSubviewOfClass(UIView *root, NSString *className, NSUInteger depth);
 void DYFSRequestRelayout(void);
-NSUInteger DYFSSidebarHookCount(void);
 NSUInteger DYFSTabBarHookCount(void);
+
+// ---------------------------------------------------------------------------
+// 外观原值备份。
+//
+// 之前的透明化是「单向写入」：一旦把 backgroundColor 清成透明、把 view 隐藏，
+// 关掉开关也不会还原，必须杀掉抖音进程重开。这里在首次改动前把原值存到
+// associated object 上，关掉开关时统一恢复。
+// ---------------------------------------------------------------------------
+void DYFSBackupAppearance(UIView *view);
+void DYFSRestoreAllAppearance(void);
+
+// 命中率日志：几何阈值失配（去灰底悄悄失效）时打一条，方便定位。
+void DYFSNoteCardMiss(CGFloat width, CGFloat height, CGFloat refWidth);

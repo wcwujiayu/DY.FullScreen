@@ -40,13 +40,13 @@ total=$(cat src/*.m | wc -l | tr -d ' ')
 ok "源码总行数: $total"
 
 echo "== 3. 已移除功能不得复活 =="
+# 注意：评论区透明化（DYFSApplyVideoDetailBottomTransparencyInView /
+# DYFSCommentPanelLayout）是 0.3.15 的功能，本次重建有意保留，不在此列。
 removed=(
-  "DYFSApplyRecommendationTransparencyInView"
-  "DYFSApplyVideoDetailBottomTransparencyInView"
+  "DYFSApplyRecommendationTransparencyInView"   # 0.3.15 版去灰底，已由 0.4.x 取代
   "DYFSNativeSettingsCellForRow"
   "DYFSFindLabelWithText"
-  "DYFSClearSmallCardChrome"
-  "DYFSCommentPanelLayout"
+  "DYFSClearSmallCardChrome"                    # 0.3.15 去灰底配套，已无调用者
 )
 for sym in "${removed[@]}"; do
   if grep -rq "$sym" src/; then
@@ -61,14 +61,14 @@ if grep -rq "胖胖专属" src/ README.md; then
 else
   ok "无残留占位文案"
 fi
-if grep -q "启用全屏" src/DYFSCommon.m; then
-  ok "设置项标题: 启用全屏"
+if grep -q "视频全屏启动" src/DYFSCommon.m; then
+  ok "设置项标题: 视频全屏启动"
 else
   bad "未找到设置项标题常量"
 fi
 
 echo "== 5. 模块划分完整性 =="
-for mod in DYFSCommon DYFSContext DYFSLayout DYFSChrome DYFSSettings DYFSTransparency; do
+for mod in DYFSCommon DYFSContext DYFSLayout DYFSChrome DYFSComment DYFSSettings DYFSTransparency; do
   if [ -f "src/$mod.h" ] && [ -f "src/$mod.m" ]; then
     ok "$mod.h / $mod.m 成对存在"
   else

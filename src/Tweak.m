@@ -2,8 +2,9 @@
 //  Tweak.m
 //  DY.FullScreen
 //
-//  Entry point only: install every hook and keep retrying until Douyin's
-//  lazily-loaded classes exist. All real work lives in the feature modules.
+//  入口：安装各模块的 hook 并持续重试，直到抖音懒加载的类都已就绪。
+//  真正的逻辑分散在 DYFSLayout / DYFSChrome / DYFSTransparency /
+//  DYFSComment / DYFSSettings 五个模块里，本文件不做具体处理。
 //
 
 #import <Foundation/Foundation.h>
@@ -11,9 +12,9 @@
 #import <objc/runtime.h>
 
 #import "DYFSCommon.h"
-#import "DYFSContext.h"
 #import "DYFSLayout.h"
 #import "DYFSChrome.h"
+#import "DYFSComment.h"
 #import "DYFSSettings.h"
 
 // 启动后两次重排：第一次消化初始布局，第二次修正延迟加载的视图
@@ -24,16 +25,27 @@ static void DYFSInstallHooks(void) {
     NSString *bundle = NSBundle.mainBundle.bundleIdentifier ?: @"";
     if (![bundle isEqualToString:DYFSBundleID]) return;
 
-    DYFSLayoutInstallHooks();
-    DYFSChromeInstallHooks();
-    DYFSSettingsInstallHooks();
+    DYFSLayoutInstallHooks();      // 全屏尺寸修正（0.3.15 逻辑）
+    DYFSChromeInstallHooks();      // 底栏与进度条透明
+    DYFSCommentInstallHooks();     // 评论区 / 输入栏透明（0.3.15 独有）
+    DYFSSettingsInstallHooks();    // 侧边栏入口与原生设置开关
+    // 去灰底（DYFSTransparency）没有独立 hook，
+    // 由上述 layout hook 在布局完成后触发。
 
-    NSString *summary = [NSString stringWithFormat:@"video-list %@; story-container %@; interaction-controller %@; player-content %d/3; sidebar hooks %lu/2; tab bar hooks %lu/2; settings-switch %@",
-                         DYFSInstalledFeed ? @"on" : @"off", DYFSInstalledStory ? @"on" : @"off",
-                         DYFSInstalledInteractionController ? @"on" : @"off",
-                         (int)DYFSInstalledPlayerContentA + (int)DYFSInstalledPlayerContentB + (int)DYFSInstalledPlayerContentC,
-                         (unsigned long)DYFSSidebarHookCount(), (unsigned long)DYFSTabBarHookCount(),
-                         DYFSInstalledNativeSettingsSwitch ? @"on" : @"off"];
+    NSString *summary = [NSString stringWithFormat:
+        @"video-list %@; story-container %@; interaction-controller %@; player-content %d/3; "
+        @"element-stack %@; comment hooks %d/4; detail hooks %d/3; "
+        @"tab bar hooks %lu/2; settings-switch %@",
+        DYFSInstalledFeed ? @"on" : @"off",
+        DYFSInstalledStory ? @"on" : @"off",
+        DYFSInstalledInteractionController ? @"on" : @"off",
+        (int)DYFSInstalledPlayerContentA + (int)DYFSInstalledPlayerContentB + (int)DYFSInstalledPlayerContentC,
+        DYFSInstalledElementStack ? @"on" : @"off",
+        (int)DYFSInstalledCommentPanel + (int)DYFSInstalledCommentInputContainer +
+        (int)DYFSInstalledCommentInputBackground + (int)DYFSInstalledCommentInputController,
+        (int)DYFSInstalledDetailTable + (int)DYFSInstalledDetailCell + (int)DYFSInstalledMixPanelDetail,
+        (unsigned long)DYFSTabBarHookCount(),
+        DYFSInstalledNativeSettingsSwitch ? @"on" : @"off"];
     if (![summary isEqualToString:DYFSLastInstallSummary]) {
         DYFSLastInstallSummary = [summary copy];
         DYFSLog(summary);
@@ -50,9 +62,9 @@ static void DYFSScheduleHooks(void) {
         DYFSInstallHooks();
 
         BOOL layoutInstalled = DYFSInstalledFeed && DYFSInstalledStory && DYFSInstalledInteractionController;
-        BOOL sidebarInstalled = DYFSInstalledSidebarIcon || DYFSInstalledSidebarRight;
         BOOL tabBarInstalled = DYFSInstalledTabBarLayout && DYFSInstalledTabBarHidden;
         BOOL playerLayoutInstalled = DYFSInstalledPlayerContentB || DYFSInstalledPlayerContentC;
+        BOOL detailInstalled = DYFSInstalledDetailTable || DYFSInstalledDetailCell || DYFSInstalledMixPanelDetail;
 
         if (!DYFSStartupRelayoutScheduled && layoutInstalled && tabBarInstalled && playerLayoutInstalled) {
             DYFSStartupRelayoutScheduled = YES;
@@ -62,27 +74,11 @@ static void DYFSScheduleHooks(void) {
                            dispatch_get_main_queue(), ^{ DYFSRequestRelayout(); });
         }
 
-        if ((!layoutInstalled || !sidebarInstalled || !tabBarInstalled || !DYFSInstalledNativeSettingsSwitch ||
-             !playerLayoutInstalled) && DYFSInstallAttempts < kDYFSMaxInstallAttempts) {
+        if ((!layoutInstalled || !tabBarInstalled ||
+             !DYFSInstalledNativeSettingsSwitch || !playerLayoutInstalled ||
+             !DYFSInstalledElementStack || !detailInstalled) &&
+            DYFSInstallAttempts < kDYFSMaxInstallAttempts) {
             DYFSScheduleHooks();
-            return;
-        }
-
-        // 放弃重试前把缺失项一次性打出来，方便定位是哪几个类没找到。
-        if (DYFSInstallAttempts >= kDYFSMaxInstallAttempts &&
-            (!layoutInstalled || !sidebarInstalled || !tabBarInstalled ||
-             !DYFSInstalledNativeSettingsSwitch || !playerLayoutInstalled)) {
-            NSMutableArray *missing = [NSMutableArray array];
-            if (!DYFSInstalledFeed) [missing addObject:@"AWEFeedTableView"];
-            if (!DYFSInstalledStory) [missing addObject:@"AWEStoryContainerCollectionView"];
-            if (!DYFSInstalledInteractionController) [missing addObject:@"AWEPlayInteractionViewController"];
-            if (!DYFSInstalledPlayerContentB && !DYFSInstalledPlayerContentC) [missing addObject:@"player view controller"];
-            if (!DYFSInstalledTabBarLayout || !DYFSInstalledTabBarHidden) [missing addObject:@"AWENormalModeTabBar"];
-            if (!DYFSInstalledSidebarIcon && !DYFSInstalledSidebarRight) [missing addObject:@"sidebar entry"];
-            if (!DYFSInstalledNativeSettingsSwitch) [missing addObject:@"AWESettingsTableViewController"];
-            DYFSLog([NSString stringWithFormat:@"gave up after %lu attempts; missing: %@",
-                     (unsigned long)DYFSInstallAttempts,
-                     missing.count ? [missing componentsJoinedByString:@", "] : @"(unknown)"]);
         }
     });
 }

@@ -72,6 +72,7 @@ static BOOL DYFSIsPlainBacking(UIView *view) {
 }
 
 static void DYFSClearOwnBackground(UIView *view) {
+    DYFSBackupAppearance(view);
     // 毛玻璃底栏（图 2 / 图 3 的黑色半透明）靠 effect 渲染，
     // 清 backgroundColor 无效；置 nil 后 contentView 里的内容仍然保留。
     if ([view isKindOfClass:UIVisualEffectView.class]) {
@@ -171,6 +172,7 @@ static void DYFSHideDarkBottomChrome(UIView *root, UIView *reference) {
 
         if (DYFSIsNamedChrome(view) || DYFSIsDarkBackgroundView(view) ||
             [view isKindOfClass:UIVisualEffectView.class]) {
+            DYFSBackupAppearance(view);
             view.hidden = YES;
         }
     }
@@ -225,6 +227,7 @@ static void DYFSClearBottomBarChrome(UIView *reference) {
             continue;
         }
         DYFSClearOwnBackground(view);
+        DYFSBackupAppearance(view);
         view.hidden = YES;
         DYFSBottomChromeHideCount++;
     }
@@ -244,7 +247,9 @@ static UIView *DYFSFindBottomDock(UIView *root, UIView *reference) {
     UIView *best = nil;
     CGFloat bestScore = -CGFLOAT_MAX;
     NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
-    while (pending.count > 0) {
+    NSUInteger visited = 0;
+    while (pending.count > 0 && visited < 400) {
+        visited++;
         UIView *view = pending.lastObject;
         [pending removeLastObject];
         [pending addObjectsFromArray:view.subviews];
@@ -277,7 +282,9 @@ static void DYFSApplyCardTransparency(UIView *root, UIView *reference) {
     if (refW < 100.0 || refH < 160.0) return;
 
     NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
-    while (pending.count > 0) {
+    NSUInteger visited = 0;
+    while (pending.count > 0 && visited < 600) {
+        visited++;
         UIView *view = pending.lastObject;
         [pending removeLastObject];
         [pending addObjectsFromArray:view.subviews];
@@ -289,8 +296,14 @@ static void DYFSApplyCardTransparency(UIView *root, UIView *reference) {
             CGRect rect = [candidate convertRect:candidate.bounds toView:ref];
             CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
             CGFloat minY = CGRectGetMinY(rect);
-            if (w < MAX(80.0, refW * 0.25) || w > refW * 1.01) continue;
-            if (h < 22.0 || h > 220.0 || minY < 0) continue;
+            if (w < MAX(80.0, refW * 0.25) || w > refW * 1.01) {
+                DYFSNoteCardMiss(w, h, refW);
+                continue;
+            }
+            if (h < 22.0 || h > 220.0 || minY < 0) {
+                DYFSNoteCardMiss(w, h, refW);
+                continue;
+            }
 
             DYFSClearChromeTree(candidate, 0);
             DYFSHideOverlappingChrome(candidate, ref);
@@ -375,12 +388,14 @@ static void DYFSClearTabBarBackgrounds(UIView *root) {
             ([sub isMemberOfClass:UIView.class] && tabH > 0 &&
              fabs(CGRectGetHeight(sub.bounds) - tabH) < 1.0);
         if (isBackground) {
+            DYFSBackupAppearance(sub);
             sub.hidden = YES;
             sub.backgroundColor = UIColor.clearColor;
         }
         // 细分割线
         if (CGRectGetHeight(sub.bounds) > 0 && CGRectGetHeight(sub.bounds) < 1.0 &&
             CGRectGetWidth(sub.bounds) > 300.0) {
+            DYFSBackupAppearance(sub);
             sub.hidden = YES;
         }
     }
@@ -395,15 +410,14 @@ static void DYFSApplyInteractionTransparency(UIView *root) {
     for (UIView *sub in [root.subviews copy]) {
         if ([sub isKindOfClass:[UIView class]] && sub.backgroundColor &&
             CGColorEqualToColor(sub.backgroundColor.CGColor, [UIColor blackColor].CGColor)) {
+            DYFSBackupAppearance(sub);
             sub.hidden = YES;
         }
     }
 }
 
-void DYFSTransparencyApplyInView(UIView *root) {
+static void DYFSTransparencyApplyNow(UIView *root) {
     if (!root || !DYFSIsEnabled()) return;
-    // 直播间与开播预览保持抖音原生外观，不做透明化。
-    if (DYFSIsActualLiveRoomContext(root) || DYFSIsLivePreStreamContext(root)) return;
 
     // 「贴底」必须以窗口为参照：root 往往是整张 feed 列表，高度可达数千。
     UIWindow *window = root.window;
@@ -428,4 +442,36 @@ void DYFSTransparencyApplyInView(UIView *root) {
     }
     // 兜底：单独存在的深色背景条（不成组的 pill 也能覆盖到）
     DYFSHideDarkBottomChrome(root, reference);
+}
+
+void DYFSTransparencyApplyInView(UIView *root) {
+    if (!root) return;
+
+    // 关掉开关：把之前改过的视图一次性还原，避免必须重启抖音才恢复。
+    static BOOL lastEnabled = YES;
+    if (!DYFSIsEnabled()) {
+        if (lastEnabled) {
+            DYFSRestoreAllAppearance();
+            lastEnabled = NO;
+        }
+        return;
+    }
+    lastEnabled = YES;
+
+    // 节流：共有 9 个触发点会调用这里，同一帧内合并成一次，
+    // 否则一次滑动会跑很多遍全树遍历。
+    static BOOL scheduled = NO;
+    static NSMutableArray<UIView *> *pending = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ pending = [NSMutableArray array]; });
+
+    if (![pending containsObject:root]) [pending addObject:root];
+    if (scheduled) return;
+    scheduled = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        scheduled = NO;
+        NSArray<UIView *> *roots = [pending copy];
+        [pending removeAllObjects];
+        for (UIView *item in roots) DYFSTransparencyApplyNow(item);
+    });
 }

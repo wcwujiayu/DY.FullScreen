@@ -5,11 +5,12 @@
 //  Chrome cleanup: hide the bottom tab bar background and clear the dark bars
 //  that Douyin leaves inside the progress containers in full-screen mode.
 //
+//  信息流直播卡片的上移逻辑已整体移除：本文件只负责底栏与进度条背景的透明，
+//  不再挂任何直播间 / audienceVC 相关钩子。
+//
 
 #import "DYFSChrome.h"
 #import "DYFSCommon.h"
-#import "DYFSContext.h"
-#import "DYFSLayout.h"
 #import <objc/message.h>
 
 static IMP DYFSOriginalTabBarLayout = NULL;
@@ -22,184 +23,10 @@ static IMP DYFSOriginalPlayerProgressLayout = NULL;
 // Collapses repeated transparency requests within one main-queue turn.
 static BOOL DYFSTabBarTransparencyScheduled = NO;
 
-static IMP DYFSOriginalLiveCellLayout = NULL;
-static BOOL DYFSInstalledLiveCard = NO;
-
-// 直播卡片内嵌的 audienceVC 会在自己的 -viewDidLayoutSubviews 里重新排布底部
-// 文案/点赞区，从而把 cell 级的上移覆盖掉。这里再挂一个 audienceVC 钩子，在它
-// 自己排好之后再次上移，保证账号/文案/点赞区稳定停在底栏上方。
-static IMP DYFSOriginalLiveAudienceLayoutIES = NULL;
-static IMP DYFSOriginalLiveAudienceLayoutAWE = NULL;
-static BOOL DYFSInstalledLiveAudienceIES = NO;
-static BOOL DYFSInstalledLiveAudienceAWE = NO;
-
 // 兜底：拦截底栏 -setBackgroundColor:，启用时强制清成透明，避免抖音在布局后
 // 又把背景刷成深色（与 DYYY 的 skinContainerView 隐藏互不冲突）。
 static IMP DYFSOriginalTabBarSetBackgroundColor = NULL;
 static BOOL DYFSInstalledTabBarSetBackgroundColor = NO;
-
-
-// ---------------------------------------------------------------------------
-// 信息流直播卡片：只把账号 / 文案 / 按钮顶到底栏上方，视频层完全不动。
-//
-// 视频所在的视图是铺满且无文字无控件的，遇到它就继续下钻；
-// 只有"下游含文字或控件"的容器才会被上移，且上移量按窗口坐标计算，
-// 因此不会把视频推离原位。
-// ---------------------------------------------------------------------------
-static BOOL DYFSLiveCardSubtreeHasContent(UIView *view, NSUInteger depth) {
-    if (!view || depth > 8) return NO;
-    if ([view isKindOfClass:UIControl.class] || [view isKindOfClass:UIButton.class] ||
-        [view isKindOfClass:UITextField.class]) return YES;
-    if ([view isKindOfClass:UILabel.class]) {
-        UILabel *label = (UILabel *)view;
-        if (label.text.length > 0 || label.attributedText.length > 0) return YES;
-    }
-    for (UIView *sub in view.subviews) {
-        if (DYFSLiveCardSubtreeHasContent(sub, depth + 1)) return YES;
-    }
-    return NO;
-}
-
-static void DYFSLiftLiveCardContent(UIView *container, UIView *reference, CGFloat limitY) {
-    if (!container || !reference) return;
-    CGFloat w = CGRectGetWidth(container.bounds), h = CGRectGetHeight(container.bounds);
-
-    for (UIView *sub in [container.subviews copy]) {
-        if (sub.hidden || sub.alpha <= 0.01) continue;
-
-        CGFloat sw = CGRectGetWidth(sub.frame), sh = CGRectGetHeight(sub.frame);
-        BOOL fills = w > 0 && h > 0 && sw >= w * 0.95 && sh >= h * 0.90;
-        if (fills) {                                   // 视频层 / 背景层：继续下钻
-            DYFSLiftLiveCardContent(sub, reference, limitY);
-            continue;
-        }
-        if (!DYFSLiveCardSubtreeHasContent(sub, 0)) continue;   // 纯背景：不动
-
-        CGRect rect = [sub convertRect:sub.bounds toView:reference];
-        CGFloat delta = CGRectGetMaxY(rect) - limitY;
-        if (delta <= 1.0) continue;
-
-        CGRect frame = sub.frame;
-        frame.origin.y -= delta;
-        if (CGRectGetMinY(frame) < -1.0) continue;     // 别顶出屏幕
-        sub.frame = frame;
-        DYFSLiveCardLiftCount++;
-        // 诊断日志（每次启动最多几条，确认上移逻辑确实命中卡片内容）。
-        static NSUInteger liftLogCount = 0;
-        if (liftLogCount < 6) {
-            liftLogCount++;
-            DYFSLog([NSString stringWithFormat:
-                @"live-card lift: %@ moved up %.1f (limitY %.1f)",
-                NSStringFromClass(sub.class), delta, limitY]);
-        }
-    }
-}
-
-// 统一的「把卡片底部内容顶到底栏上方」入口。
-static void DYFSLiveCardLiftNow(UIView *content, UIView *reference) {
-    if (!content || !reference) return;
-    CGFloat referenceHeight = CGRectGetHeight(reference.bounds);
-    if (referenceHeight <= 0) return;
-    CGFloat tabBarHeight = DYFSBottomTabBarHeight(content);
-    CGFloat limitY = referenceHeight - tabBarHeight;
-    if (limitY <= 0 || limitY >= referenceHeight) return;
-    DYFSLiftLiveCardContent(content, reference, limitY);
-}
-
-// 一次性诊断日志：定位「hook 已安装但上移次数为 0」时到底卡在哪一步。
-static void DYFSLiveCardDiagnoseOnce(NSString *reason) {
-    static NSUInteger logged = 0;
-    if (logged >= 4) return;
-    logged++;
-    DYFSLog([NSString stringWithFormat:@"live-card skip/branch: %@", reason]);
-}
-
-static void DYFSLiveCellLayout(id self, SEL cmd) {
-    if (DYFSOriginalLiveCellLayout) ((void (*)(id, SEL))DYFSOriginalLiveCellLayout)(self, cmd);
-    if (!DYFSIsEnabled()) return;
-
-    UIView *cell = (UIView *)self;
-    if (!cell.window) {
-        DYFSLiveCardDiagnoseOnce(@"cell.window is nil");
-        return;
-    }
-    if (DYFSIsActualLiveRoomContext(cell)) {
-        DYFSLiveCardDiagnoseOnce(@"treated as actual live room");
-        return;
-    }
-    if (DYFSIsLivePreStreamContext(cell)) {
-        DYFSLiveCardDiagnoseOnce(@"treated as pre-stream");
-        return;
-    }
-    DYFSLiveCardProcessCount++;
-
-    id audience = nil;
-    @try {
-        SEL selector = NSSelectorFromString(@"audienceVC");
-        if ([cell respondsToSelector:selector]) {
-            audience = ((id (*)(id, SEL))objc_msgSend)(cell, selector);
-        }
-        if (!audience) audience = DYFSSafeValueForKey(cell, @"audienceVC");
-    } @catch (__unused NSException *exception) {
-        DYFSLiveCardDiagnoseOnce(@"audienceVC lookup raised");
-        return;
-    }
-    if (![audience isKindOfClass:UIViewController.class]) {
-        DYFSLiveCardDiagnoseOnce([NSString stringWithFormat:
-            @"audienceVC not a VC (cell %@), fallback to cell subtree",
-            NSStringFromClass(cell.class)]);
-    }
-    // 取不到 audienceVC 时直接处理 cell 自身：40.7.0 上属性名可能不是 audienceVC，
-    // 但底部文案一定在 cell 的子树里，用同样的「含文字/控件才上移」规则处理。
-    UIView *content = ([audience isKindOfClass:UIViewController.class])
-        ? ((UIViewController *)audience).view : nil;
-    if (!content) content = cell;
-
-    DYFSLiveCardLiftNow(content, cell.window);
-
-    // 抖音常在 cell 布局之后再做一次动画收尾，这里下一帧补一次，保证稳定。
-    static BOOL liftPending = NO;
-    if (!liftPending) {
-        liftPending = YES;
-        __weak UIView *weakContent = content;
-        __weak UIWindow *weakWindow = cell.window;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            liftPending = NO;
-            UIView *strongContent = weakContent;
-            UIWindow *strongWindow = weakWindow;
-            if (!strongContent || !strongWindow || !strongContent.window) return;
-            if (!DYFSIsEnabled()) return;
-            DYFSLiveCardLiftNow(strongContent, strongWindow);
-        });
-    }
-}
-
-// 供 audienceVC 的 -viewDidLayoutSubviews 钩子复用：只在「直播卡片内嵌」的
-// audienceVC 上移内容，真实直播间里不触发（真实的 audienceVC 不在卡片内）。
-static void DYFSLiveAudienceLift(id self, SEL cmd) {
-    UIViewController *vc = (UIViewController *)self;
-    UIView *view = vc.view;
-    if (!view || !view.window) return;
-    if (!DYFSViewIsInsideLiveFeedCell(view)) return;
-    if (DYFSIsLivePreStreamContext(view)) return;
-    DYFSLiveCardLiftNow(view, view.window);
-}
-
-static void DYFSLiveAudienceLayoutIES(id self, SEL cmd) {
-    if (DYFSOriginalLiveAudienceLayoutIES) {
-        ((void (*)(id, SEL))DYFSOriginalLiveAudienceLayoutIES)(self, cmd);
-    }
-    if (!DYFSIsEnabled()) return;
-    DYFSLiveAudienceLift(self, cmd);
-}
-
-static void DYFSLiveAudienceLayoutAWE(id self, SEL cmd) {
-    if (DYFSOriginalLiveAudienceLayoutAWE) {
-        ((void (*)(id, SEL))DYFSOriginalLiveAudienceLayoutAWE)(self, cmd);
-    }
-    if (!DYFSIsEnabled()) return;
-    DYFSLiveAudienceLift(self, cmd);
-}
 
 // 复刻 DYYY（DYYY.xm 15100+）的判定：递归遍历底栏全部子视图，跳过按钮，
 // 把「_UIBarBackground / 纯 UIView 且高度匹配底栏」的背景与细分割线一并隐藏。
@@ -231,6 +58,7 @@ static void DYFSApplyTabBarTransparencyRecursively(UIView *container, UIView *ta
         BOOL plainFullBarBackground = [subview isMemberOfClass:UIView.class] &&
             fabs(CGRectGetHeight(subview.bounds) - barHeight) < 1.0;
 
+        DYFSBackupAppearance(subview);
         if (enabled && (namedBackground || plainFullBarBackground)) {
             subview.hidden = YES;
             subview.backgroundColor = UIColor.clearColor;
@@ -242,6 +70,7 @@ static void DYFSApplyTabBarTransparencyRecursively(UIView *container, UIView *ta
 
         if (CGRectGetHeight(subview.bounds) > 0 && CGRectGetHeight(subview.bounds) < 1.0 &&
             CGRectGetWidth(subview.bounds) > 300.0) {
+            DYFSBackupAppearance(subview);
             subview.hidden = enabled;
         }
 
@@ -252,10 +81,35 @@ static void DYFSApplyTabBarTransparencyRecursively(UIView *container, UIView *ta
     }
 }
 
+// 判断当前选中的是不是最左边那个 tab（首页）。
+static void DYFSUpdateHomeTabState(UIView *tabBar) {
+    UIControl *selected = nil, *leftmost = nil;
+    CGFloat selectedX = CGFLOAT_MAX, leftmostX = CGFLOAT_MAX;
+    for (UIView *subview in tabBar.subviews) {
+        if (![subview isKindOfClass:UIControl.class]) continue;
+        UIControl *control = (UIControl *)subview;
+        CGFloat x = CGRectGetMinX(control.frame);
+        if (x < leftmostX) { leftmostX = x; leftmost = control; }
+        if (control.selected && x < selectedX) { selectedX = x; selected = control; }
+    }
+    DYFSLastHomeTabSelected = (selected != nil && selected == leftmost);
+}
+
 static void DYFSApplyTabBarTransparency(UIView *tabBar) {
     if (!tabBar) return;
 
+    static BOOL lastEnabled = YES;
     BOOL enabled = DYFSIsEnabled();
+    // 关掉开关：把改过的视图一并还原（与去灰底共用同一份备份表）。
+    if (!enabled) {
+        if (lastEnabled) {
+            DYFSRestoreAllAppearance();
+            lastEnabled = NO;
+        }
+    } else {
+        lastEnabled = YES;
+        DYFSUpdateHomeTabState(tabBar);
+    }
 
     Class generalButtonClass = NSClassFromString(kDYFSClassTabBarGeneralButton);
     Class plusButtonClass = NSClassFromString(kDYFSClassTabBarGeneralPlusButton);
@@ -271,6 +125,7 @@ static void DYFSApplyTabBarTransparency(UIView *tabBar) {
     }
 
     // 部分版本把底色直接刷在底栏自身或 layer 上，一并清掉。
+    DYFSBackupAppearance(tabBar);
     if (enabled) {
         tabBar.backgroundColor = UIColor.clearColor;
         if (tabBar.layer) tabBar.layer.backgroundColor = UIColor.clearColor.CGColor;
@@ -401,26 +256,5 @@ void DYFSChromeInstallHooks(void) {
     if (cls && !DYFSInstalledTabBarSetBackgroundColor) {
         DYFSInstalledTabBarSetBackgroundColor = DYFSInstallHook(cls, @selector(setBackgroundColor:),
                     (IMP)DYFSTabBarSetBackgroundColor, &DYFSOriginalTabBarSetBackgroundColor);
-    }
-
-    cls = NSClassFromString(kDYFSClassLiveFeedCell);
-    if (cls && !DYFSInstalledLiveCard) {
-        DYFSInstalledLiveCard = DYFSInstallHook(cls, @selector(layoutSubviews),
-                    (IMP)DYFSLiveCellLayout, &DYFSOriginalLiveCellLayout);
-    }
-    DYFSLiveCardHookInstalled = DYFSInstalledLiveCard;
-
-    // 直播卡片内嵌的 audienceVC（IES / AWE 两种类名都挂），在其自身排布完之后
-    // 再次上移底部内容，避免被它自己的布局覆盖。真实直播间里的同名 VC 不在卡片
-    // 内，钩子里会被 DYFSViewIsInsideLiveFeedCell 拦掉，不会误伤。
-    cls = NSClassFromString(@"IESLiveAudienceViewController");
-    if (cls && !DYFSInstalledLiveAudienceIES) {
-        DYFSInstalledLiveAudienceIES = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
-                    (IMP)DYFSLiveAudienceLayoutIES, &DYFSOriginalLiveAudienceLayoutIES);
-    }
-    cls = NSClassFromString(@"AWELiveAudienceViewController");
-    if (cls && !DYFSInstalledLiveAudienceAWE) {
-        DYFSInstalledLiveAudienceAWE = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
-                    (IMP)DYFSLiveAudienceLayoutAWE, &DYFSOriginalLiveAudienceLayoutAWE);
     }
 }

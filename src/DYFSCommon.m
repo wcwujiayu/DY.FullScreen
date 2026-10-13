@@ -7,6 +7,7 @@
 
 #import "DYFSCommon.h"
 #import <objc/message.h>
+#import <QuartzCore/QuartzCore.h>
 
 // 抖音私有类名集中清单（改版时只需改这里）
 NSString * const kDYFSClassFeedTableView = @"AWEFeedTableView";
@@ -15,8 +16,6 @@ NSString * const kDYFSClassPlayInteraction = @"AWEPlayInteractionViewController"
 NSString * const kDYFSClassPlayVideoA = @"AWEAwemePlayVideoViewController";
 NSString * const kDYFSClassPlayVideoB = @"AWEDPlayerFeedPlayerViewController";
 NSString * const kDYFSClassPlayVideoC = @"AWEDPlayerViewController_Merge";
-NSString * const kDYFSClassSidebarIcon = @"AWELeftSideBarTopIconHorizontalView";
-NSString * const kDYFSClassSidebarRight = @"AWELeftSideBarTopRightLayoutView";
 NSString * const kDYFSClassInteractionProgress = @"AWEPlayInteractionProgressContainerView";
 NSString * const kDYFSClassPlayerProgress = @"AWEDPlayerProgressContainerView";
 NSString * const kDYFSClassTabBar = @"AWENormalModeTabBar";
@@ -26,11 +25,15 @@ NSString * const kDYFSClassTabBarPlusButton = @"AWENormalModeTabBarPlusButton";
 NSString * const kDYFSClassSettings = @"AWESettingsTableViewController";
 NSString * const kDYFSClassSettingItemModel = @"AWESettingItemModel";
 NSString * const kDYFSClassSettingSectionModel = @"AWESettingSectionModel";
-NSString * const kDYFSClassLiveFeedCell = @"IESLiveInnerFeedLiveRoomCell";
 NSString * const kDYFSClassBarBackground = @"_UIBarBackground";
 NSString * const kDYFSClassDetailTable = @"AWEAwemeDetailTableViewController";
 NSString * const kDYFSClassDetailCell = @"AWEAwemeDetailCellViewController";
 NSString * const kDYFSClassMixPanel = @"AWEMixVideoPanelDetailTableViewController";
+NSString * const kDYFSClassElementStack = @"AWEElementStackView";
+NSString * const kDYFSClassCommentPanel = @"AWECommentPanelContainerSwiftImpl.CommentContainerInnerViewController";
+NSString * const kDYFSClassCommentInputContainer = @"AWECommentInputViewSwiftImpl.CommentInputContainerView";
+NSString * const kDYFSClassCommentInputBackground = @"AWECommentInputBackgroundView";
+NSString * const kDYFSClassCommentInputController = @"AWECommentInputViewController";
 
 const NSUInteger kDYFSMaxInstallAttempts = 60;
 const NSTimeInterval kDYFSInstallRetryInterval = 1.0;
@@ -38,28 +41,33 @@ const NSTimeInterval kDYFSInstallRetryInterval = 1.0;
 NSString * const DYFSBundleID = @"com.ss.iphone.ugc.Aweme";
 NSString * const DYFSTestedVersion = @"40.7.0";
 NSString * const DYFSEnabledKey = @"com.dy.fullscreen.enabled";
-NSString * const DYFSSettingsTitle = @"启用全屏";
+NSString * const DYFSSettingsTitle = @"视频全屏启动";
 
 BOOL DYFSInstalledFeed = NO;
 BOOL DYFSInstalledStory = NO;
 BOOL DYFSInstalledInteractionController = NO;
+BOOL DYFSInstalledElementStack = NO;
 BOOL DYFSInstalledPlayerContentA = NO;
 BOOL DYFSInstalledPlayerContentB = NO;
 BOOL DYFSInstalledPlayerContentC = NO;
-BOOL DYFSInstalledSidebarIcon = NO;
-BOOL DYFSInstalledSidebarRight = NO;
 BOOL DYFSInstalledTabBarLayout = NO;
 BOOL DYFSInstalledTabBarHidden = NO;
 BOOL DYFSInstalledTabBarDidMove = NO;
 BOOL DYFSInstalledTabBarDidAddSubview = NO;
 BOOL DYFSInstalledInteractionProgress = NO;
 BOOL DYFSInstalledPlayerProgress = NO;
+BOOL DYFSInstalledCommentPanel = NO;
+BOOL DYFSInstalledCommentInputContainer = NO;
+BOOL DYFSInstalledCommentInputBackground = NO;
+BOOL DYFSInstalledCommentInputController = NO;
+BOOL DYFSInstalledDetailTable = NO;
+BOOL DYFSInstalledDetailCell = NO;
+BOOL DYFSInstalledMixPanelDetail = NO;
 BOOL DYFSInstalledNativeSettingsSwitch = NO;
 BOOL DYFSNativeSettingsRowAdded = NO;
 BOOL DYFSStartupRelayoutScheduled = NO;
 BOOL DYFSSchedulePending = NO;
 NSUInteger DYFSInstallAttempts = 0;
-BOOL DYFSSettingsEntryVisible = NO;
 BOOL DYFSVersionMismatch = NO;
 NSString *DYFSLastInstallSummary = @"尚未检测";
 
@@ -67,13 +75,9 @@ NSString *DYFSLastInstallSummary = @"尚未检测";
 NSUInteger DYFSLayoutFixCount = 0;
 NSUInteger DYFSInteractionContainerAdjustCount = 0;
 NSUInteger DYFSPlayerContentAdjustCount = 0;
-NSUInteger DYFSLivePreviewPlayerAdjustCount = 0;
 NSUInteger DYFSTabBarApplyCount = 0;
-NSUInteger DYFSLiveCardLiftCount = 0;
-NSUInteger DYFSLiveCardProcessCount = 0;
-NSUInteger DYFSSetFrameLiftCount = 0;
 NSUInteger DYFSBottomChromeHideCount = 0;
-BOOL DYFSLiveCardHookInstalled = NO;
+NSUInteger DYFSCommentBarTransparencyApplyCount = 0;
 BOOL DYFSLastHomeTabSelected = NO;
 BOOL DYFSLastTabBackgroundHidden = NO;
 
@@ -120,10 +124,6 @@ void DYFSRequestRelayout(void) {
             [window layoutIfNeeded];
         }
     });
-}
-
-NSUInteger DYFSSidebarHookCount(void) {
-    return (DYFSInstalledSidebarIcon ? 1 : 0) + (DYFSInstalledSidebarRight ? 1 : 0);
 }
 
 NSUInteger DYFSTabBarHookCount(void) {
@@ -193,4 +193,127 @@ BOOL DYFSSafeSetValueForKey(id object, id value, NSString *key) {
         DYFSLog([NSString stringWithFormat:@"KVC set failed for %@: %@", key, exception.reason ?: @"unknown"]);
         return NO;
     }
+}
+
+#pragma mark - 外观原值备份（关掉开关后可还原）
+
+static char kDYFSAppearanceBackupKey;
+static NSHashTable<UIView *> *DYFSBackedUpViews = nil;
+
+static NSHashTable<UIView *> *DYFSBackedUpViewsTable(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        // 弱引用：view 被释放后自动消失，不会把整棵视图树钉在内存里。
+        DYFSBackedUpViews = [NSHashTable weakObjectsHashTable];
+    });
+    return DYFSBackedUpViews;
+}
+
+void DYFSBackupAppearance(UIView *view) {
+    if (!view) return;
+    // 只备份一次：后续重复清背景不应覆盖掉最初的原值。
+    if (objc_getAssociatedObject(view, &kDYFSAppearanceBackupKey)) return;
+
+    NSMutableDictionary *backup = [NSMutableDictionary dictionary];
+    backup[@"hidden"] = @(view.hidden);
+    backup[@"opaque"] = @(view.opaque);
+    backup[@"alpha"] = @(view.alpha);
+    backup[@"backgroundColor"] = view.backgroundColor ?: (id)NSNull.null;
+
+    if (view.layer) {
+        CGColorRef layerColor = view.layer.backgroundColor;
+        UIColor *layerBackground = layerColor ? [UIColor colorWithCGColor:layerColor] : nil;
+        backup[@"layerBackgroundColor"] = layerBackground ?: (id)NSNull.null;
+    }
+    if ([view isKindOfClass:UIVisualEffectView.class]) {
+        UIVisualEffect *effect = ((UIVisualEffectView *)view).effect;
+        if (effect) backup[@"effect"] = effect;
+    }
+
+    // 渐变层 / 形状层：DYFSClearOwnBackground 会把它们清成透明，一并备份。
+    if (view.layer && view.layer.sublayers.count > 0) {
+        NSMutableArray *layerSnapshots = [NSMutableArray array];
+        for (CALayer *layer in view.layer.sublayers) {
+            NSMutableDictionary *snapshot = [NSMutableDictionary dictionary];
+            if (layer.backgroundColor) {
+                snapshot[@"backgroundColor"] = [UIColor colorWithCGColor:layer.backgroundColor];
+            }
+            if ([layer isKindOfClass:CAGradientLayer.class] && ((CAGradientLayer *)layer).colors) {
+                snapshot[@"colors"] = ((CAGradientLayer *)layer).colors;
+            }
+            if ([layer isKindOfClass:CAShapeLayer.class] && ((CAShapeLayer *)layer).fillColor) {
+                snapshot[@"fillColor"] = [UIColor colorWithCGColor:((CAShapeLayer *)layer).fillColor];
+            }
+            if (snapshot.count > 0) [layerSnapshots addObject:snapshot];
+        }
+        if (layerSnapshots.count > 0) backup[@"sublayers"] = layerSnapshots;
+    }
+
+    objc_setAssociatedObject(view, &kDYFSAppearanceBackupKey, backup, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [DYFSBackedUpViewsTable() addObject:view];
+}
+
+void DYFSRestoreAllAppearance(void) {
+    NSHashTable<UIView *> *table = DYFSBackedUpViewsTable();
+    NSArray<UIView *> *views = table.allObjects;
+    if (views.count == 0) return;
+
+    for (UIView *view in views) {
+        NSDictionary *backup = objc_getAssociatedObject(view, &kDYFSAppearanceBackupKey);
+        if (!backup) continue;
+
+        id value = backup[@"hidden"];
+        if (value) view.hidden = [value boolValue];
+        value = backup[@"opaque"];
+        if (value) view.opaque = [value boolValue];
+        value = backup[@"alpha"];
+        if (value) view.alpha = [value floatValue];
+
+        value = backup[@"backgroundColor"];
+        if (value) view.backgroundColor = [value isKindOfClass:NSNull.class] ? nil : (UIColor *)value;
+
+        value = backup[@"layerBackgroundColor"];
+        if (value && view.layer) {
+            view.layer.backgroundColor = [value isKindOfClass:NSNull.class] ? NULL : ((UIColor *)value).CGColor;
+        }
+
+        value = backup[@"effect"];
+        if (value && [view isKindOfClass:UIVisualEffectView.class]) {
+            ((UIVisualEffectView *)view).effect = (UIVisualEffect *)value;
+        }
+
+        NSArray *layerSnapshots = backup[@"sublayers"];
+        if (layerSnapshots && view.layer && view.layer.sublayers.count == layerSnapshots.count) {
+            NSUInteger index = 0;
+            for (NSDictionary *snapshot in layerSnapshots) {
+                CALayer *layer = view.layer.sublayers[index++];
+                id color = snapshot[@"backgroundColor"];
+                if (color) layer.backgroundColor = ((UIColor *)color).CGColor;
+                id colors = snapshot[@"colors"];
+                if (colors && [layer isKindOfClass:CAGradientLayer.class]) {
+                    ((CAGradientLayer *)layer).colors = colors;
+                }
+                id fillColor = snapshot[@"fillColor"];
+                if (fillColor && [layer isKindOfClass:CAShapeLayer.class]) {
+                    ((CAShapeLayer *)layer).fillColor = ((UIColor *)fillColor).CGColor;
+                }
+            }
+        }
+
+        objc_setAssociatedObject(view, &kDYFSAppearanceBackupKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+
+    [table removeAllObjects];
+    DYFSLog([NSString stringWithFormat:@"restored %lu view(s) after switch off", (unsigned long)views.count]);
+}
+
+#pragma mark - 阈值失配日志
+
+void DYFSNoteCardMiss(CGFloat width, CGFloat height, CGFloat refWidth) {
+    static NSUInteger missCount = 0;
+    if (missCount >= 3) return;
+    missCount++;
+    DYFSLog([NSString stringWithFormat:
+        @"card threshold miss (w %.0f, h %.0f, refW %.0f) - 抖音改版可能导致去灰底失效",
+        width, height, refWidth]);
 }
