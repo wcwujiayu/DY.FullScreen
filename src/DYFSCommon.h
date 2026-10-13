@@ -44,6 +44,8 @@ extern NSUInteger DYFSPlayerContentAdjustCount;
 extern NSUInteger DYFSLivePreviewPlayerAdjustCount;
 extern NSUInteger DYFSTabBarApplyCount;
 extern NSUInteger DYFSLiveCardLiftCount;
+extern NSUInteger DYFSLiveCardProcessCount;
+extern NSUInteger DYFSSetFrameLiftCount;
 extern NSUInteger DYFSBottomChromeHideCount;
 extern BOOL DYFSLiveCardHookInstalled;
 extern BOOL DYFSLastHomeTabSelected;
