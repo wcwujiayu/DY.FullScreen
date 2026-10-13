@@ -27,9 +27,12 @@ static NSString * const kDYFSGuardFeedCell = @"AWEFeedCellViewController";
 
 static BOOL DYFSClassNameIsLiveRoom(NSString *name) {
     if (name.length == 0) return NO;
+    // 注意：信息流里的直播「卡片」(IESLiveInnerFeedLiveRoomCell) 不是真实直播间，
+    // 它的 audienceVC 才是 IESLiveAudienceViewController。把它也算进 live room 会让
+    // DYFSLiveCellLayout 的「直播卡片上移」逻辑因 early-return 而永远不执行。
+    // 真实直播间只认下面这几种 VC / 容器类名。
     return [name containsString:kDYFSGuardIESAudience] ||
            [name containsString:kDYFSGuardAWEAudience] ||
-           [name containsString:@"IESLiveInnerFeedLiveRoomCell"] ||
            [name containsString:kDYFSGuardLiveRoom] ||
            [name containsString:kDYFSGuardLiveRoomContainer];
 }
