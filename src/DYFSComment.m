@@ -9,6 +9,7 @@
 #import "DYFSComment.h"
 #import "DYFSCommon.h"
 #import <QuartzCore/QuartzCore.h>
+#import <objc/message.h>
 
 static IMP DYFSOriginalCommentPanelLayout = NULL;
 static IMP DYFSOriginalCommentInputContainerLayout = NULL;
