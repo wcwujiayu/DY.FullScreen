@@ -247,6 +247,55 @@ static void DYFSApplyCardTransparency(UIView *root, UIView *reference) {
 
 #pragma mark - 入口
 
+// 直接定位全局底栏（AWENormalModeTabBar），隐藏其背景与分割线。
+// 复刻 DYYY 的已验证写法（DYYY.xm 15236）：不再依赖几何搜索，直接按类与
+// skinContainerView 处理，因此能稳定命中抖音 40.7.0 的底栏结构。
+static void DYFSClearTabBarBackgrounds(UIView *root) {
+    if (!root) return;
+    UIView *tabBar = DYFSFindSubviewOfClass(root, kDYFSClassTabBar, 0);
+    if (!tabBar) return;
+
+    id skin = DYFSSafeValueForKey(tabBar, @"skinContainerView");
+    if ([skin isKindOfClass:UIView.class]) ((UIView *)skin).hidden = YES;
+
+    Class generalBtn = NSClassFromString(kDYFSClassTabBarGeneralButton);
+    Class plusBtn = NSClassFromString(kDYFSClassTabBarPlusButton);
+    Class barBg = NSClassFromString(kDYFSClassBarBackground);
+    CGFloat tabH = CGRectGetHeight(tabBar.bounds);
+
+    for (UIView *sub in [tabBar.subviews copy]) {
+        if (generalBtn && [sub isKindOfClass:generalBtn]) continue;
+        if (plusBtn && [sub isKindOfClass:plusBtn]) continue;
+
+        BOOL isBackground = (barBg && [sub isKindOfClass:barBg]) ||
+            ([sub isMemberOfClass:UIView.class] && tabH > 0 &&
+             fabs(CGRectGetHeight(sub.bounds) - tabH) < 1.0);
+        if (isBackground) {
+            sub.hidden = YES;
+            sub.backgroundColor = UIColor.clearColor;
+        }
+        // 细分割线
+        if (CGRectGetHeight(sub.bounds) > 0 && CGRectGetHeight(sub.bounds) < 1.0 &&
+            CGRectGetWidth(sub.bounds) > 300.0) {
+            sub.hidden = YES;
+        }
+    }
+}
+
+// 复刻 DYYY（DYYY.xm 15953）：点赞 / 评论 / 分享右栏里纯黑背景直接隐藏。
+static void DYFSApplyInteractionTransparency(UIView *root) {
+    if (!root) return;
+    UIViewController *vc = DYFSFindViewController(root);
+    Class cls = NSClassFromString(kDYFSClassPlayInteraction);
+    if (!cls || ![vc isKindOfClass:cls]) return;
+    for (UIView *sub in [root.subviews copy]) {
+        if ([sub isKindOfClass:[UIView class]] && sub.backgroundColor &&
+            CGColorEqualToColor(sub.backgroundColor.CGColor, [UIColor blackColor].CGColor)) {
+            sub.hidden = YES;
+        }
+    }
+}
+
 void DYFSTransparencyApplyInView(UIView *root) {
     if (!root || !DYFSIsEnabled()) return;
     // 直播间与开播预览保持抖音原生外观，不做透明化。
@@ -256,6 +305,10 @@ void DYFSTransparencyApplyInView(UIView *root) {
     UIWindow *window = root.window;
     if (!window) window = UIApplication.sharedApplication.windows.firstObject;
     UIView *reference = window ?: root;
+
+    // 已验证写法：直接命中全局底栏与互动右栏，不依赖几何搜索。
+    DYFSClearTabBarBackgrounds(reference);
+    DYFSApplyInteractionTransparency(root);
 
     UIView *dock = DYFSFindBottomDock(root, reference);
     if (dock) {
