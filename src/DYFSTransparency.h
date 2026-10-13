@@ -10,3 +10,6 @@
 /// 在 root 视图树中定位并透明化目标区域。
 /// 只清除背景（backgroundColor / layer / 渐变），不动文字、透明度、图标与交互。
 void DYFSTransparencyApplyInView(UIView *root);
+
+/// 诊断用：返回当前窗口底部区域候选视图的类名清单（贴底、铺满宽、高度 20~170）。
+NSString *DYFSBottomViewDump(void);

@@ -299,6 +299,44 @@ static void DYFSApplyCardTransparency(UIView *root, UIView *reference) {
     }
 }
 
+NSString *DYFSBottomViewDump(void) {
+    UIWindow *window = nil;
+    for (UIWindow *candidate in UIApplication.sharedApplication.windows.reverseObjectEnumerator) {
+        if (candidate.isKeyWindow) { window = candidate; break; }
+    }
+    if (!window) window = UIApplication.sharedApplication.windows.lastObject;
+    if (!window) return @"（取不到窗口）";
+
+    CGFloat refW = CGRectGetWidth(window.bounds), refH = CGRectGetHeight(window.bounds);
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    [lines addObject:[NSString stringWithFormat:@"顶层VC %@",
+                      NSStringFromClass(DYFSActiveTopViewController().class)]];
+    if (refW < 100.0 || refH < 200.0) return [lines componentsJoinedByString:@"\n"];
+
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:window];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    NSUInteger visited = 0;
+    while (pending.count > 0 && visited < 600 && lines.count < 8) {
+        visited++;
+        UIView *view = pending.lastObject;
+        [pending removeLastObject];
+        [pending addObjectsFromArray:view.subviews];
+        if (view == window || view.hidden || view.alpha <= 0.01) continue;
+
+        CGRect rect = [view convertRect:view.bounds toView:window];
+        CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
+        if (w < refW * 0.6 || h < 20.0 || h > 170.0) continue;
+        if (CGRectGetMinY(rect) < refH - 220.0) continue;
+
+        NSString *name = NSStringFromClass(view.class);
+        if ([seen containsObject:name]) continue;
+        [seen addObject:name];
+        [lines addObject:[NSString stringWithFormat:@"%@ (%.0fx%.0f, y %.0f)",
+                          name, w, h, CGRectGetMinY(rect)]];
+    }
+    return [lines componentsJoinedByString:@"\n"];
+}
+
 #pragma mark - 入口
 
 // 直接定位全局底栏（AWENormalModeTabBar），隐藏其背景与分割线。
