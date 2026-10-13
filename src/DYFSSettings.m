@@ -11,6 +11,11 @@
 #import <objc/message.h>
 
 static IMP DYFSOriginalNativeSettingsDidAppear = NULL;
+
+// 下面的 UI 类会用到这两个函数，而它们定义在文件后半部分，需要先声明。
+static NSString *DYFSStatusText(void);
+static void DYFSOpenSettings(id sender);
+
 @interface DYFSSettingsActionTarget : NSObject
 + (instancetype)sharedTarget;
 - (void)openSettings:(id)sender;
