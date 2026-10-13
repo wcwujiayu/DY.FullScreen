@@ -176,6 +176,60 @@ static void DYFSHideDarkBottomChrome(UIView *root, UIView *reference) {
     }
 }
 
+// 含文字/控件的贴底条（评论条、操作栏）：只把里面的深色背景层层清掉，
+// 白底与彩色元素保留，文字与按钮照旧可点。
+static void DYFSClearDarkChromeTree(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return;
+    for (UIView *sub in [view.subviews copy]) {
+        if (sub.hidden || sub.alpha <= 0.01) continue;
+        BOOL isPlain = !DYFSSubtreeHasText(sub, 0) && !DYFSSubtreeHasControl(sub, 0);
+        BOOL isEffect = [sub isKindOfClass:UIVisualEffectView.class];
+        if (isPlain && (DYFSIsDarkBackgroundView(sub) || DYFSIsNamedChrome(sub) || isEffect)) {
+            DYFSClearOwnBackground(sub);
+            if (isEffect || DYFSIsNamedChrome(sub)) sub.hidden = YES;
+            DYFSBottomChromeHideCount++;
+            continue;
+        }
+        DYFSClearDarkChromeTree(sub, depth + 1);
+    }
+}
+
+// 「我-作品 / 我-喜欢 / 收藏」以及视频详情页底部的那条黑条并不是全局底栏
+// (AWENormalModeTabBar)，而是各页面自带的贴底容器，因此按几何特征统一处理：
+// 贴底、铺满宽、高度 20~170。
+//   · 不含文字与控件的（纯背景条）→ 直接隐藏并清底；
+//   · 含文字或控件的（评论条、操作栏）→ 只清背景，按钮与文字全部保留可点。
+static void DYFSClearBottomBarChrome(UIView *reference) {
+    if (!reference) return;
+    CGFloat refW = CGRectGetWidth(reference.bounds), refH = CGRectGetHeight(reference.bounds);
+    if (refW < 100.0 || refH < 200.0) return;
+
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:reference];
+    NSUInteger visited = 0;
+    while (pending.count > 0 && visited < 600) {
+        visited++;
+        UIView *view = pending.lastObject;
+        [pending removeLastObject];
+        [pending addObjectsFromArray:view.subviews];
+        if (view == reference || view.hidden || view.alpha <= 0.01) continue;
+
+        CGRect rect = [view convertRect:view.bounds toView:reference];
+        CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
+        if (w < refW * 0.9 || h < 20.0 || h > 170.0) continue;
+        if (CGRectGetMinY(rect) < refH - 220.0) continue;   // 只看底部区域
+        if (CGRectGetMaxY(rect) < refH - 12.0) continue;    // 必须贴底
+
+        if (DYFSSubtreeHasText(view, 0) || DYFSSubtreeHasControl(view, 0)) {
+            DYFSClearOwnBackground(view);
+            DYFSClearDarkChromeTree(view, 0);
+            continue;
+        }
+        DYFSClearOwnBackground(view);
+        view.hidden = YES;
+        DYFSBottomChromeHideCount++;
+    }
+}
+
 #pragma mark - 目标定位
 
 // 视频底部的信息 / 评论 dock：宽、矮、贴底（对应「我-作品」「我-喜欢」的底栏）
@@ -328,6 +382,8 @@ void DYFSTransparencyApplyInView(UIView *root) {
         DYFSHideOverlappingChrome(dock, reference);
     }
     DYFSApplyCardTransparency(root, reference);
+    // 个人主页 / 详情页自己的贴底黑条（与首页底栏不是同一个类）
+    DYFSClearBottomBarChrome(reference);
     // 兜底：单独存在的深色背景条（不成组的 pill 也能覆盖到）
     DYFSHideDarkBottomChrome(root, reference);
 }
