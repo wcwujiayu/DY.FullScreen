@@ -106,13 +106,32 @@ static void DYFSLiveCardLiftNow(UIView *content, UIView *reference) {
     DYFSLiftLiveCardContent(content, reference, limitY);
 }
 
+// 一次性诊断日志：定位「hook 已安装但上移次数为 0」时到底卡在哪一步。
+static void DYFSLiveCardDiagnoseOnce(NSString *reason) {
+    static NSUInteger logged = 0;
+    if (logged >= 4) return;
+    logged++;
+    DYFSLog([NSString stringWithFormat:@"live-card skip/branch: %@", reason]);
+}
+
 static void DYFSLiveCellLayout(id self, SEL cmd) {
     if (DYFSOriginalLiveCellLayout) ((void (*)(id, SEL))DYFSOriginalLiveCellLayout)(self, cmd);
     if (!DYFSIsEnabled()) return;
 
     UIView *cell = (UIView *)self;
-    if (!cell.window) return;
-    if (DYFSIsActualLiveRoomContext(cell) || DYFSIsLivePreStreamContext(cell)) return;
+    if (!cell.window) {
+        DYFSLiveCardDiagnoseOnce(@"cell.window is nil");
+        return;
+    }
+    if (DYFSIsActualLiveRoomContext(cell)) {
+        DYFSLiveCardDiagnoseOnce(@"treated as actual live room");
+        return;
+    }
+    if (DYFSIsLivePreStreamContext(cell)) {
+        DYFSLiveCardDiagnoseOnce(@"treated as pre-stream");
+        return;
+    }
+    DYFSLiveCardProcessCount++;
 
     id audience = nil;
     @try {
@@ -122,7 +141,13 @@ static void DYFSLiveCellLayout(id self, SEL cmd) {
         }
         if (!audience) audience = DYFSSafeValueForKey(cell, @"audienceVC");
     } @catch (__unused NSException *exception) {
+        DYFSLiveCardDiagnoseOnce(@"audienceVC lookup raised");
         return;
+    }
+    if (![audience isKindOfClass:UIViewController.class]) {
+        DYFSLiveCardDiagnoseOnce([NSString stringWithFormat:
+            @"audienceVC not a VC (cell %@), fallback to cell subtree",
+            NSStringFromClass(cell.class)]);
     }
     // 取不到 audienceVC 时直接处理 cell 自身：40.7.0 上属性名可能不是 audienceVC，
     // 但底部文案一定在 cell 的子树里，用同样的「含文字/控件才上移」规则处理。
