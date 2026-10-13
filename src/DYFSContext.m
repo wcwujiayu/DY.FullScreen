@@ -118,7 +118,20 @@ BOOL DYFSIsLivePreStreamPlayer(id playerController) {
     return NO;
 }
 
+// 信息流里的直播卡片（IESLiveInnerFeedLiveRoomCell）会内嵌一个 audienceVC，
+// 但它的宿主是信息流而非真实直播间。把它误判成「真实直播间」会让透明化与
+// 卡片内容上移全部 early-return 而失效，因此这里显式排除。
+static BOOL DYFSViewIsInsideLiveFeedCell(UIView *view) {
+    for (UIView *cursor = view; cursor; cursor = cursor.superview) {
+        if ([NSStringFromClass(cursor.class) isEqualToString:kDYFSClassLiveFeedCell]) return YES;
+    }
+    return NO;
+}
+
 BOOL DYFSIsActualLiveRoomContext(UIView *view) {
+    // 直播卡片内嵌 audienceVC，但属于信息流，不当成真实直播间处理。
+    if (DYFSViewIsInsideLiveFeedCell(view)) return NO;
+
     for (UIView *cursor = view; cursor; cursor = cursor.superview) {
         if (DYFSClassNameIsLiveRoom(NSStringFromClass(cursor.class))) return YES;
     }
