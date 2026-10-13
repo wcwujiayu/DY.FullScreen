@@ -339,6 +339,22 @@ static BOOL DYFSIsPlayerViewController(UIViewController *vc) {
            (playClassC && [vc isKindOfClass:playClassC]);
 }
 
+// 只补「纯画面」视图：文章类 / 图文里带文字和按钮的容器被补高后，底部锚定的
+// 「阅读文章」之类的按钮会跟着沉到底栏里，所以命中几何条件后还要确认这棵子树
+// 里没有文字和控件。
+static BOOL DYFSSubtreeHasTextOrControl(UIView *view, NSUInteger depth) {
+    if (!view || depth > 6) return NO;
+    if ([view isKindOfClass:UIControl.class]) return YES;
+    if ([view isKindOfClass:UILabel.class]) {
+        UILabel *label = (UILabel *)view;
+        if (label.text.length > 0 || label.attributedText.length > 0) return YES;
+    }
+    for (UIView *subview in view.subviews) {
+        if (DYFSSubtreeHasTextOrControl(subview, depth + 1)) return YES;
+    }
+    return NO;
+}
+
 static void DYFSUIViewSetFrame(id self, SEL cmd, CGRect frame) {
     if (!DYFSOriginalSetFrame) return;
 
@@ -356,8 +372,9 @@ static void DYFSUIViewSetFrame(id self, SEL cmd, CGRect frame) {
             CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
             if (tabBarHeight > 0 && fabs(diff - tabBarHeight) < 1.0) {
                 UIViewController *vc = DYFSFindViewController(view);
-                if (DYFSIsPlayerViewController(vc)) {
+                if (DYFSIsPlayerViewController(vc) && !DYFSSubtreeHasTextOrControl(view, 0)) {
                     frame.size.height = superH;   // 只补高度，origin 不动
+                    DYFSSetFrameLiftCount++;
                 }
             }
         }
