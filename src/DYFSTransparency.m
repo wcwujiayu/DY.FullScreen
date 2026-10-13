@@ -382,8 +382,12 @@ void DYFSTransparencyApplyInView(UIView *root) {
         DYFSHideOverlappingChrome(dock, reference);
     }
     DYFSApplyCardTransparency(root, reference);
-    // 个人主页 / 详情页自己的贴底黑条（与首页底栏不是同一个类）
-    DYFSClearBottomBarChrome(reference);
+    // 个人主页 / 详情页自己的贴底黑条（与首页底栏不是同一个类）。
+    // 只在个人主页与详情页跑：首页信息流里同样贴底的容器（文章类视频的
+    // 「阅读文章」条等）不该被动到。
+    if (DYFSInProfileContext(root) || DYFSIsDetailVideoContext(root)) {
+        DYFSClearBottomBarChrome(reference);
+    }
     // 兜底：单独存在的深色背景条（不成组的 pill 也能覆盖到）
     DYFSHideDarkBottomChrome(root, reference);
 }
