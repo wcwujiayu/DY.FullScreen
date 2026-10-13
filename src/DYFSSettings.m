@@ -44,10 +44,10 @@ static NSString *DYFSStatusText(void) {
         DYFSLastTabBackgroundHidden ? @"是" : @"否",
         (unsigned long)DYFSTabBarApplyCount,
         (unsigned long)DYFSLayoutFixCount,
-        DYFSVersionMismatch ? @"不一致，布局可能异常" : @"一致",
         DYFSLiveCardHookInstalled ? @"已安装" : @"未找到 IESLiveInnerFeedLiveRoomCell",
         (unsigned long)DYFSLiveCardLiftCount,
-        (unsigned long)DYFSBottomChromeHideCount];
+        (unsigned long)DYFSBottomChromeHideCount,
+        DYFSVersionMismatch ? @"不一致，布局可能异常" : @"一致"];
 }
 
 // Forward declaration: DYFSSettingsActionTarget below calls into it.
