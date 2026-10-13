@@ -25,8 +25,9 @@ static IMP DYFSOriginalDetailTableLayout = NULL;
 static IMP DYFSOriginalDetailCellLayout = NULL;
 static IMP DYFSOriginalMixPanelDetailLayout = NULL;
 
-// 等父容器尺寸稳定后再匹配高度，避免与原生布局互相触发
-static const NSTimeInterval kDYFSPlayerSettleDelay = 0.18;
+// 等父容器尺寸稳定后再匹配高度，避免与原生布局互相触发。
+// 0.05s：原来的 0.18s 会让"关掉评论区后画面先黑底、再拉伸"的过程肉眼可见。
+static const NSTimeInterval kDYFSPlayerSettleDelay = 0.05;
 static char kDYFSPlayerLayoutPendingKey;
 static char kDYFSPlayerParentHeightKey;
 static char kDYFSPlayerSettledGeometryKey;
