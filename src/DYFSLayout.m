@@ -20,6 +20,10 @@ static IMP DYFSOriginalPlayerContentA = NULL;
 static IMP DYFSOriginalPlayerContentB = NULL;
 static IMP DYFSOriginalPlayerContentC = NULL;
 static IMP DYFSOriginalSetFrame = NULL;
+static IMP DYFSOriginalDetailTableLayout = NULL;
+static IMP DYFSOriginalDetailCellLayout = NULL;
+static IMP DYFSOriginalMixPanelLayout = NULL;
+static BOOL DYFSDetailTransparencyScheduled = NO;
 
 // Associated-object keys used to settle player geometry without looping.
 // 等父容器尺寸稳定后再匹配高度，避免与原生布局互相触发
@@ -262,6 +266,43 @@ static void DYFSPlayerContentLayoutCommon(id self, SEL cmd, IMP original) {
     DYFSSchedulePlayerContentHeight(self);
 }
 
+// ---------------------------------------------------------------------------
+// 详情页（我-作品 / 我-喜欢 / 收藏 里点开的视频）透明化。
+//
+// 这类页面不走首页 feed 的那几个类，之前 DYFSTransparencyApplyInView 根本没被
+// 调用，所以它自己那条贴底黑条一直是黑的。这里只补「触发」，不做任何高度修正，
+// 避免与 DYYY 的详情页相关功能冲突。
+// ---------------------------------------------------------------------------
+static void DYFSScheduleDetailTransparency(UIView *view) {
+    if (!view || DYFSDetailTransparencyScheduled) return;
+    DYFSDetailTransparencyScheduled = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        DYFSDetailTransparencyScheduled = NO;
+        if (!DYFSIsEnabled()) return;
+        DYFSTransparencyApplyInView(view);
+        if (view.superview) DYFSTransparencyApplyInView(view.superview);
+    });
+}
+
+static void DYFSDetailLayoutCommon(id self, SEL cmd, IMP original) {
+    if (original) ((void (*)(id, SEL))original)(self, cmd);
+    if (!DYFSIsEnabled()) return;
+    UIViewController *controller = (UIViewController *)self;
+    DYFSScheduleDetailTransparency(controller.view);
+}
+
+static void DYFSDetailTableLayout(id self, SEL cmd) {
+    DYFSDetailLayoutCommon(self, cmd, DYFSOriginalDetailTableLayout);
+}
+
+static void DYFSDetailCellLayout(id self, SEL cmd) {
+    DYFSDetailLayoutCommon(self, cmd, DYFSOriginalDetailCellLayout);
+}
+
+static void DYFSMixPanelLayout(id self, SEL cmd) {
+    DYFSDetailLayoutCommon(self, cmd, DYFSOriginalMixPanelLayout);
+}
+
 void DYFSPlayerContentLayoutA(id self, SEL cmd) {
     DYFSPlayerContentLayoutCommon(self, cmd, DYFSOriginalPlayerContentA);
 }
@@ -360,6 +401,23 @@ void DYFSLayoutInstallHooks(void) {
     if (!DYFSInstalledPlayerContentC && cls) {
         DYFSInstalledPlayerContentC = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
                     (IMP)DYFSPlayerContentLayoutC, &DYFSOriginalPlayerContentC);
+    }
+
+    // 详情页 / 个人主页视频页：只触发透明化，不改高度。
+    cls = NSClassFromString(kDYFSClassDetailTable);
+    if (cls && !DYFSOriginalDetailTableLayout) {
+        DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+                        (IMP)DYFSDetailTableLayout, &DYFSOriginalDetailTableLayout);
+    }
+    cls = NSClassFromString(kDYFSClassDetailCell);
+    if (cls && !DYFSOriginalDetailCellLayout) {
+        DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+                        (IMP)DYFSDetailCellLayout, &DYFSOriginalDetailCellLayout);
+    }
+    cls = NSClassFromString(kDYFSClassMixPanel);
+    if (cls && !DYFSOriginalMixPanelLayout) {
+        DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+                        (IMP)DYFSMixPanelLayout, &DYFSOriginalMixPanelLayout);
     }
 
     // 全局兜底：装在 UIView 上，覆盖信息流直播卡片这类不走播放器层级的内容。
