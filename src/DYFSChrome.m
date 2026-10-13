@@ -25,6 +25,19 @@ static BOOL DYFSTabBarTransparencyScheduled = NO;
 static IMP DYFSOriginalLiveCellLayout = NULL;
 static BOOL DYFSInstalledLiveCard = NO;
 
+// 直播卡片内嵌的 audienceVC 会在自己的 -viewDidLayoutSubviews 里重新排布底部
+// 文案/点赞区，从而把 cell 级的上移覆盖掉。这里再挂一个 audienceVC 钩子，在它
+// 自己排好之后再次上移，保证账号/文案/点赞区稳定停在底栏上方。
+static IMP DYFSOriginalLiveAudienceLayoutIES = NULL;
+static IMP DYFSOriginalLiveAudienceLayoutAWE = NULL;
+static BOOL DYFSInstalledLiveAudienceIES = NO;
+static BOOL DYFSInstalledLiveAudienceAWE = NO;
+
+// 兜底：拦截底栏 -setBackgroundColor:，启用时强制清成透明，避免抖音在布局后
+// 又把背景刷成深色（与 DYYY 的 skinContainerView 隐藏互不冲突）。
+static IMP DYFSOriginalTabBarSetBackgroundColor = NULL;
+static BOOL DYFSInstalledTabBarSetBackgroundColor = NO;
+
 
 // ---------------------------------------------------------------------------
 // 信息流直播卡片：只把账号 / 文案 / 按钮顶到底栏上方，视频层完全不动。
@@ -70,6 +83,14 @@ static void DYFSLiftLiveCardContent(UIView *container, UIView *reference, CGFloa
         frame.origin.y -= delta;
         if (CGRectGetMinY(frame) < -1.0) continue;     // 别顶出屏幕
         sub.frame = frame;
+        // 诊断日志（每次启动最多几条，确认上移逻辑确实命中卡片内容）。
+        static NSUInteger liftLogCount = 0;
+        if (liftLogCount < 6) {
+            liftLogCount++;
+            DYFSLog([NSString stringWithFormat:
+                @"live-card lift: %@ moved up %.1f (limitY %.1f)",
+                NSStringFromClass(sub.class), delta, limitY]);
+        }
     }
 }
 
@@ -104,104 +125,101 @@ static void DYFSLiveCellLayout(id self, SEL cmd) {
     DYFSLiftLiveCardContent(content, cell.window, limitY);
 }
 
-static BOOL DYFSIsTabBarControl(UIView *view, Class generalButtonClass, Class plusButtonClass) {
-    if (!view) return NO;
-    NSString *name = NSStringFromClass(view.class);
-    return [view isKindOfClass:UIControl.class] ||
-           (generalButtonClass && [view isKindOfClass:generalButtonClass]) ||
-           (plusButtonClass && [view isKindOfClass:plusButtonClass]) ||
-           [name containsString:@"AWENormalModeTabBarGeneralButton"] ||
-           [name containsString:@"AWENormalModeTabBarGeneralPlusButton"] ||
-           [name containsString:@"AWENormalModeTabBarPlusButton"];
+// 供 audienceVC 的 -viewDidLayoutSubviews 钩子复用：只在「直播卡片内嵌」的
+// audienceVC 上移内容，真实直播间里不触发（真实的 audienceVC 不在卡片内）。
+static void DYFSLiveAudienceLift(id self, SEL cmd) {
+    UIViewController *vc = (UIViewController *)self;
+    UIView *view = vc.view;
+    if (!view || !view.window) return;
+    if (!DYFSViewIsInsideLiveFeedCell(view)) return;
+    if (DYFSIsLivePreStreamContext(view)) return;
+
+    CGFloat windowHeight = CGRectGetHeight(view.window.bounds);
+    CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
+    CGFloat limitY = windowHeight - tabBarHeight;
+    if (limitY <= 0) return;
+
+    DYFSLiftLiveCardContent(view, view.window, limitY);
 }
 
-static BOOL DYFSContainsTabBarControl(UIView *view, Class generalButtonClass, Class plusButtonClass, NSUInteger depth) {
-    if (!view || depth > 8) return NO;
-    if (DYFSIsTabBarControl(view, generalButtonClass, plusButtonClass)) return YES;
-    for (UIView *subview in view.subviews) {
-        if (DYFSContainsTabBarControl(subview, generalButtonClass, plusButtonClass, depth + 1)) return YES;
+static void DYFSLiveAudienceLayoutIES(id self, SEL cmd) {
+    if (DYFSOriginalLiveAudienceLayoutIES) {
+        ((void (*)(id, SEL))DYFSOriginalLiveAudienceLayoutIES)(self, cmd);
     }
-    return NO;
+    if (!DYFSIsEnabled()) return;
+    DYFSLiveAudienceLift(self, cmd);
 }
 
-static void DYFSApplyTabBarBackgroundsRecursively(UIView *container, UIView *tabBar,
-                                                  BOOL enabled, Class generalButtonClass,
-                                                  Class plusButtonClass, Class barBackgroundClass,
-                                                  NSUInteger depth) {
-    if (!container || depth > 10) return;
-    CGFloat barWidth = CGRectGetWidth(tabBar.bounds);
-    CGFloat barHeight = CGRectGetHeight(tabBar.bounds);
-
-    for (UIView *subview in [container.subviews copy]) {
-        if (DYFSIsTabBarControl(subview, generalButtonClass, plusButtonClass)) continue;
-
-        NSString *name = NSStringFromClass(subview.class);
-        CGRect rect = [subview convertRect:subview.bounds toView:tabBar];
-        CGFloat width = CGRectGetWidth(rect);
-        CGFloat height = CGRectGetHeight(rect);
-        CGFloat minX = CGRectGetMinX(rect);
-        CGFloat minY = CGRectGetMinY(rect);
-
-        BOOL namedBackground = (barBackgroundClass && [subview isKindOfClass:barBackgroundClass]) ||
-            [name containsString:@"Background"] || [name containsString:@"Backdrop"] ||
-            [name containsString:@"Blur"] || [subview isKindOfClass:UIVisualEffectView.class];
-        BOOL fillsBar = barWidth > 0.0 && barHeight > 0.0 &&
-            width >= barWidth * 0.88 && minX <= barWidth * 0.06 &&
-            height >= MAX(24.0, barHeight * 0.40) && height <= barHeight * 1.35 &&
-            minY <= barHeight * 0.38 && CGRectGetMaxY(rect) >= barHeight * 0.50;
-        BOOL plainFullBarBackground = [subview isMemberOfClass:UIView.class] &&
-            fillsBar && !DYFSContainsTabBarControl(subview, generalButtonClass, plusButtonClass, 0);
-        BOOL divider = height > 0.0 && height < 1.2 && width >= barWidth * 0.75;
-
-        if (namedBackground || plainFullBarBackground || divider) {
-            subview.hidden = enabled;
-            if (namedBackground || plainFullBarBackground) subview.backgroundColor = UIColor.clearColor;
-        }
-        if (!subview.hidden) {
-            DYFSApplyTabBarBackgroundsRecursively(subview, tabBar, enabled, generalButtonClass,
-                                                   plusButtonClass, barBackgroundClass, depth + 1);
-        }
+static void DYFSLiveAudienceLayoutAWE(id self, SEL cmd) {
+    if (DYFSOriginalLiveAudienceLayoutAWE) {
+        ((void (*)(id, SEL))DYFSOriginalLiveAudienceLayoutAWE)(self, cmd);
     }
+    if (!DYFSIsEnabled()) return;
+    DYFSLiveAudienceLift(self, cmd);
 }
 
 static void DYFSApplyTabBarTransparency(UIView *tabBar) {
     if (!tabBar) return;
 
     BOOL enabled = DYFSIsEnabled();
+
+    // 与 DYYY（DYYY.xm 15100+）一致的底栏类名集合。
     Class generalButtonClass = NSClassFromString(kDYFSClassTabBarGeneralButton);
     Class plusButtonClass = NSClassFromString(kDYFSClassTabBarGeneralPlusButton);
-    Class barBackgroundClass = NSClassFromString(kDYFSClassBarBackground);
+    Class plusContainerClass = NSClassFromString(kDYFSClassTabBarPlusButton);
+    Class plusInnerClass = NSClassFromString(@"AWENormalModeTabBarGeneralPlusInnerButton");
+    Class barBackgroundClass = NSClassFromString(kDYFSClassBarBackground);   // _UIBarBackground
+    Class tabBarButtonClass = NSClassFromString(@"UITabBarButton");
 
-    BOOL isHomeSelected = NO;
-    for (UIView *subview in [tabBar.subviews copy]) {
-        if (!generalButtonClass || ![subview isKindOfClass:generalButtonClass]) continue;
-        NSString *label = subview.accessibilityLabel ?: @"";
-        id status = DYFSSafeValueForKey(subview, @"status");
-        BOOL selected = [status respondsToSelector:@selector(integerValue)] && [status integerValue] == 2;
-        if (selected && [label isEqualToString:@"首页"]) {
-            isHomeSelected = YES;
-        }
-    }
-
-    // Hide only the tab bar's background layers on every tab. Buttons remain
-    // visible/tappable; the selected tab does not change transparency behavior.
     id skinContainer = DYFSSafeValueForKey(tabBar, @"skinContainerView");
     if ([skinContainer isKindOfClass:UIView.class]) {
         ((UIView *)skinContainer).hidden = enabled;
     }
 
-    BOOL shouldHideBackgrounds = enabled;
+    // 部分版本直接把底色刷在底栏自身或它的 layer 上，这里一并清掉。
+    if (enabled) {
+        tabBar.backgroundColor = UIColor.clearColor;
+        if (tabBar.layer) tabBar.layer.backgroundColor = UIColor.clearColor.CGColor;
+        tabBar.opaque = NO;
+    }
+
     CGFloat barHeight = CGRectGetHeight(tabBar.bounds);
     if (barHeight <= 0.0 || !isfinite(barHeight)) {
         barHeight = 49.0 + MAX(0.0, tabBar.window.safeAreaInsets.bottom);
     }
 
-    DYFSApplyTabBarBackgroundsRecursively(tabBar, tabBar, shouldHideBackgrounds,
-                                          generalButtonClass, plusButtonClass,
-                                          barBackgroundClass, 0);
+    // 单次遍历：隐藏全部背景与分割线，跳过按钮（DYYY 同款判定）。
+    for (UIView *subview in [tabBar.subviews copy]) {
+        if (generalButtonClass && [subview isKindOfClass:generalButtonClass]) continue;
+        if (plusButtonClass && [subview isKindOfClass:plusButtonClass]) continue;
+        if (plusContainerClass && [subview isKindOfClass:plusContainerClass]) continue;
+        if (plusInnerClass && [subview isKindOfClass:plusInnerClass]) continue;
+        if (tabBarButtonClass && [subview isKindOfClass:tabBarButtonClass]) continue;
 
-    DYFSLastHomeTabSelected = isHomeSelected;
-    DYFSLastTabBackgroundHidden = shouldHideBackgrounds;
+        NSString *name = NSStringFromClass(subview.class);
+        BOOL namedBackground = (barBackgroundClass && [subview isKindOfClass:barBackgroundClass]) ||
+            [name containsString:@"Background"] || [name containsString:@"Backdrop"] ||
+            [name containsString:@"Blur"] || [subview isKindOfClass:UIVisualEffectView.class];
+        BOOL plainFullBarBackground = [subview isMemberOfClass:UIView.class] &&
+            fabs(CGRectGetHeight(subview.bounds) - barHeight) < 1.0;
+
+        if (enabled && (namedBackground || plainFullBarBackground)) {
+            subview.hidden = YES;
+            subview.backgroundColor = UIColor.clearColor;
+            if (subview.layer) subview.layer.backgroundColor = UIColor.clearColor.CGColor;
+            subview.opaque = NO;
+        } else if (!enabled && (namedBackground || plainFullBarBackground)) {
+            subview.hidden = NO;
+        }
+
+        // 顶部细分割线
+        if (CGRectGetHeight(subview.bounds) > 0 && CGRectGetHeight(subview.bounds) < 1.0 &&
+            CGRectGetWidth(subview.bounds) > 300.0) {
+            subview.hidden = enabled;
+        }
+    }
+
+    DYFSLastTabBackgroundHidden = enabled;
     DYFSTabBarApplyCount++;
 }
 
@@ -277,6 +295,17 @@ void DYFSPlayerProgressLayout(id self, SEL cmd) {
 }
 
 
+// 兜底拦截底栏 -setBackgroundColor:：启用时强制透明，防止抖音在布局后把背景
+// 重新刷成深色。与 DYYY 的 skinContainerView 隐藏互不冲突（DYYY 不会给底栏刷色）。
+void DYFSTabBarSetBackgroundColor(id self, SEL cmd, UIColor *color) {
+    if (DYFSIsEnabled()) {
+        color = UIColor.clearColor;
+    }
+    if (DYFSOriginalTabBarSetBackgroundColor) {
+        ((void (*)(id, SEL, UIColor *))DYFSOriginalTabBarSetBackgroundColor)(self, cmd, color);
+    }
+}
+
 void DYFSChromeInstallHooks(void) {
     Class cls = NSClassFromString(kDYFSClassInteractionProgress);
     if (cls && !DYFSInstalledInteractionProgress) {
@@ -307,10 +336,28 @@ void DYFSChromeInstallHooks(void) {
         DYFSInstalledTabBarDidAddSubview = DYFSInstallHook(cls, @selector(didAddSubview:),
                     (IMP)DYFSTabBarDidAddSubview, &DYFSOriginalTabBarDidAddSubview);
     }
+    if (cls && !DYFSInstalledTabBarSetBackgroundColor) {
+        DYFSInstalledTabBarSetBackgroundColor = DYFSInstallHook(cls, @selector(setBackgroundColor:),
+                    (IMP)DYFSTabBarSetBackgroundColor, &DYFSOriginalTabBarSetBackgroundColor);
+    }
 
     cls = NSClassFromString(kDYFSClassLiveFeedCell);
     if (cls && !DYFSInstalledLiveCard) {
         DYFSInstalledLiveCard = DYFSInstallHook(cls, @selector(layoutSubviews),
                     (IMP)DYFSLiveCellLayout, &DYFSOriginalLiveCellLayout);
+    }
+
+    // 直播卡片内嵌的 audienceVC（IES / AWE 两种类名都挂），在其自身排布完之后
+    // 再次上移底部内容，避免被它自己的布局覆盖。真实直播间里的同名 VC 不在卡片
+    // 内，钩子里会被 DYFSViewIsInsideLiveFeedCell 拦掉，不会误伤。
+    cls = NSClassFromString(@"IESLiveAudienceViewController");
+    if (cls && !DYFSInstalledLiveAudienceIES) {
+        DYFSInstalledLiveAudienceIES = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+                    (IMP)DYFSLiveAudienceLayoutIES, &DYFSOriginalLiveAudienceLayoutIES);
+    }
+    cls = NSClassFromString(@"AWELiveAudienceViewController");
+    if (cls && !DYFSInstalledLiveAudienceAWE) {
+        DYFSInstalledLiveAudienceAWE = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
+                    (IMP)DYFSLiveAudienceLayoutAWE, &DYFSOriginalLiveAudienceLayoutAWE);
     }
 }
