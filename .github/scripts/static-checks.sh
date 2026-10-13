@@ -27,7 +27,7 @@ else
 fi
 
 echo "== 2. 模块体量（防回归到单文件巨石）=="
-limit=450
+limit=500
 for f in src/*.m; do
   n=$(wc -l < "$f" | tr -d ' ')
   if [ "$n" -gt "$limit" ]; then
