@@ -11,6 +11,7 @@
 #import <objc/message.h>
 
 static IMP DYFSOriginalNativeSettingsDidAppear = NULL;
+static IMP DYFSOriginalNativeSettingsDidLoad = NULL;
 
 // 下面的 UI 类会用到这两个函数，而它们定义在文件后半部分，需要先声明。
 static NSString *DYFSStatusText(void);
@@ -164,10 +165,12 @@ static NSString * const kDYFSDiagnosticsIdentifier = @"com.dy.fullscreen.diagnos
 
 // 尝试给设置项挂点击回调。抖音各版本的 AWESettingItemModel 属性名不一样，
 // 逐个试，成功即止；都失败也不影响开关本身，只是诊断行点不开。
+// 尝试给设置项挂点击回调。AWESettingItemModel 的属性名随抖音版本变化，
+// 逐个试；cellTappedBlock 是 DYYY 在同类版本上验证过的名字，放首位。
 static BOOL DYFSAttachRowAction(id item, void (^action)(void)) {
-    NSArray<NSString *> *candidates = @[@"actionBlock", @"cellClickBlock", @"clickBlock",
-                                        @"didSelectBlock", @"selectBlock", @"tapBlock",
-                                        @"block", @"eventBlock"];
+    NSArray<NSString *> *candidates = @[@"cellTappedBlock", @"actionBlock", @"cellClickBlock",
+                                        @"clickBlock", @"didSelectBlock", @"selectBlock",
+                                        @"tapBlock", @"block", @"eventBlock"];
     for (NSString *key in candidates) {
         if (DYFSSafeSetValueForKey(item, [action copy], key)) {
             DYFSLog([NSString stringWithFormat:@"diagnostics row action attached via %@", key]);
@@ -185,8 +188,9 @@ static id DYFSMakeDiagnosticsItem(Class itemClass) {
     DYFSSafeSetValueForKey(item, @"运行诊断", @"title");
     DYFSSafeSetValueForKey(item, @"DY.FullScreen", @"subTitle");
     DYFSSafeSetValueForKey(item, @"查看 Hook 安装状态与命中次数", @"detail");
-    DYFSSafeSetValueForKey(item, @1, @"cellType");
-    DYFSSafeSetValueForKey(item, @0, @"colorStyle");
+    // cellType 20 = 可点击的普通行（DYYY 同款）；colorStyle 2 与抖音原生一致。
+    DYFSSafeSetValueForKey(item, @20, @"cellType");
+    DYFSSafeSetValueForKey(item, @2, @"colorStyle");
     DYFSSafeSetValueForKey(item, @YES, @"isEnable");
     DYFSAttachRowAction(item, ^{
         DYFSOpenSettings(nil);
@@ -302,14 +306,26 @@ static void DYFSEnsureNativeSettingsSwitch(UIViewController *controller) {
     DYFSLog(@"inserted fullscreen switch + diagnostics row in native Douyin Settings");
 }
 
+// 抖音的 sectionDataArray 常在 viewDidAppear 之后才填充完，所以要重试。
+// 间隔用 0.08s：总窗口仍有约 2.4s，但首次出现比原来的 0.25s 快得多。
 static void DYFSRetryNativeSettingsSwitch(UIViewController *controller, NSUInteger attemptsLeft) {
     DYFSEnsureNativeSettingsSwitch(controller);
     if (DYFSNativeSettingsRowAdded || attemptsLeft == 0) return;
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         DYFSRetryNativeSettingsSwitch(controller, attemptsLeft - 1);
     });
+}
+
+// 注入尽量提前：viewDidLoad 就试一次，能赶在首屏渲染前插好，
+// 避免肉眼看到"先空、后冒出来一行"的延迟。
+static void DYFSNativeSettingsDidLoad(id self, SEL cmd) {
+    if (DYFSOriginalNativeSettingsDidLoad) {
+        ((void (*)(id, SEL))DYFSOriginalNativeSettingsDidLoad)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+    DYFSEnsureNativeSettingsSwitch((UIViewController *)self);
 }
 
 void DYFSNativeSettingsDidAppear(id self, SEL cmd, BOOL animated) {
@@ -320,7 +336,7 @@ void DYFSNativeSettingsDidAppear(id self, SEL cmd, BOOL animated) {
         // Re-check each time Settings opens. Douyin can populate sectionDataArray
         // after viewDidAppear, so retry briefly instead of waiting for a reopen.
         DYFSNativeSettingsRowAdded = NO;
-        DYFSRetryNativeSettingsSwitch((UIViewController *)self, 8);
+        DYFSRetryNativeSettingsSwitch((UIViewController *)self, 30);
     });
 }
 
@@ -330,8 +346,15 @@ void DYFSSettingsInstallHooks(void) {
     // 入口只保留抖音原生「设置」页里的那一行开关（DYYY 同款做法），
     // 左侧栏入口已按需求移除。
     Class cls = NSClassFromString(kDYFSClassSettings);
-    if (cls && !DYFSInstalledNativeSettingsSwitch) {
-        DYFSInstalledNativeSettingsSwitch = DYFSInstallHook(cls, @selector(viewDidAppear:),
-                    (IMP)DYFSNativeSettingsDidAppear, &DYFSOriginalNativeSettingsDidAppear);
+    if (cls) {
+        if (!DYFSInstalledNativeSettingsSwitch) {
+            DYFSInstalledNativeSettingsSwitch = DYFSInstallHook(cls, @selector(viewDidAppear:),
+                        (IMP)DYFSNativeSettingsDidAppear, &DYFSOriginalNativeSettingsDidAppear);
+        }
+        // viewDidLoad 提前注入，减少开关"过一会儿才出现"的延迟。
+        if (!DYFSOriginalNativeSettingsDidLoad) {
+            DYFSInstallHook(cls, @selector(viewDidLoad),
+                            (IMP)DYFSNativeSettingsDidLoad, &DYFSOriginalNativeSettingsDidLoad);
+        }
     }
 }
