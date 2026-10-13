@@ -460,18 +460,25 @@ void DYFSTransparencyApplyInView(UIView *root) {
 
     // 节流：共有 9 个触发点会调用这里，同一帧内合并成一次，
     // 否则一次滑动会跑很多遍全树遍历。
-    static BOOL scheduled = NO;
+    //
+    // 注意这里必须同步执行。之前用 dispatch_async 延到下一帧，会让
+    // "尺寸补高"和"背景透明"分两帧完成，肉眼就能看到
+    // 先黑底 → 再拉伸 → 最后才透明 的跳变。
+    static BOOL running = NO;
     static NSMutableArray<UIView *> *pending = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{ pending = [NSMutableArray array]; });
 
     if (![pending containsObject:root]) [pending addObject:root];
-    if (scheduled) return;
-    scheduled = YES;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        scheduled = NO;
-        NSArray<UIView *> *roots = [pending copy];
-        [pending removeAllObjects];
-        for (UIView *item in roots) DYFSTransparencyApplyNow(item);
-    });
+    // 正在处理时直接返回：本次请求已入队，由当前这轮一起处理，
+    // 同时天然阻断递归重入。
+    if (running) return;
+
+    running = YES;
+    while (pending.count > 0) {
+        UIView *first = pending.firstObject;
+        [pending removeObjectAtIndex:0];
+        DYFSTransparencyApplyNow(first);
+    }
+    running = NO;
 }
