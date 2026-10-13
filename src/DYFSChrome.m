@@ -83,6 +83,7 @@ static void DYFSLiftLiveCardContent(UIView *container, UIView *reference, CGFloa
         frame.origin.y -= delta;
         if (CGRectGetMinY(frame) < -1.0) continue;     // 别顶出屏幕
         sub.frame = frame;
+        DYFSLiveCardLiftCount++;
         // 诊断日志（每次启动最多几条，确认上移逻辑确实命中卡片内容）。
         static NSUInteger liftLogCount = 0;
         if (liftLogCount < 6) {
@@ -92,6 +93,17 @@ static void DYFSLiftLiveCardContent(UIView *container, UIView *reference, CGFloa
                 NSStringFromClass(sub.class), delta, limitY]);
         }
     }
+}
+
+// 统一的「把卡片底部内容顶到底栏上方」入口。
+static void DYFSLiveCardLiftNow(UIView *content, UIView *reference) {
+    if (!content || !reference) return;
+    CGFloat referenceHeight = CGRectGetHeight(reference.bounds);
+    if (referenceHeight <= 0) return;
+    CGFloat tabBarHeight = DYFSBottomTabBarHeight(content);
+    CGFloat limitY = referenceHeight - tabBarHeight;
+    if (limitY <= 0 || limitY >= referenceHeight) return;
+    DYFSLiftLiveCardContent(content, reference, limitY);
 }
 
 static void DYFSLiveCellLayout(id self, SEL cmd) {
@@ -112,17 +124,29 @@ static void DYFSLiveCellLayout(id self, SEL cmd) {
     } @catch (__unused NSException *exception) {
         return;
     }
-    if (![audience isKindOfClass:UIViewController.class]) return;
+    // 取不到 audienceVC 时直接处理 cell 自身：40.7.0 上属性名可能不是 audienceVC，
+    // 但底部文案一定在 cell 的子树里，用同样的「含文字/控件才上移」规则处理。
+    UIView *content = ([audience isKindOfClass:UIViewController.class])
+        ? ((UIViewController *)audience).view : nil;
+    if (!content) content = cell;
 
-    UIView *content = ((UIViewController *)audience).view;
-    if (!content || !content.window) return;
+    DYFSLiveCardLiftNow(content, cell.window);
 
-    CGFloat windowHeight = CGRectGetHeight(cell.window.bounds);
-    CGFloat tabBarHeight = DYFSBottomTabBarHeight(cell);
-    CGFloat limitY = windowHeight - tabBarHeight;
-    if (limitY <= 0) return;
-
-    DYFSLiftLiveCardContent(content, cell.window, limitY);
+    // 抖音常在 cell 布局之后再做一次动画收尾，这里下一帧补一次，保证稳定。
+    static BOOL liftPending = NO;
+    if (!liftPending) {
+        liftPending = YES;
+        __weak UIView *weakContent = content;
+        __weak UIWindow *weakWindow = cell.window;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            liftPending = NO;
+            UIView *strongContent = weakContent;
+            UIWindow *strongWindow = weakWindow;
+            if (!strongContent || !strongWindow || !strongContent.window) return;
+            if (!DYFSIsEnabled()) return;
+            DYFSLiveCardLiftNow(strongContent, strongWindow);
+        });
+    }
 }
 
 // 供 audienceVC 的 -viewDidLayoutSubviews 钩子复用：只在「直播卡片内嵌」的
@@ -133,13 +157,7 @@ static void DYFSLiveAudienceLift(id self, SEL cmd) {
     if (!view || !view.window) return;
     if (!DYFSViewIsInsideLiveFeedCell(view)) return;
     if (DYFSIsLivePreStreamContext(view)) return;
-
-    CGFloat windowHeight = CGRectGetHeight(view.window.bounds);
-    CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
-    CGFloat limitY = windowHeight - tabBarHeight;
-    if (limitY <= 0) return;
-
-    DYFSLiftLiveCardContent(view, view.window, limitY);
+    DYFSLiveCardLiftNow(view, view.window);
 }
 
 static void DYFSLiveAudienceLayoutIES(id self, SEL cmd) {
@@ -346,6 +364,7 @@ void DYFSChromeInstallHooks(void) {
         DYFSInstalledLiveCard = DYFSInstallHook(cls, @selector(layoutSubviews),
                     (IMP)DYFSLiveCellLayout, &DYFSOriginalLiveCellLayout);
     }
+    DYFSLiveCardHookInstalled = DYFSInstalledLiveCard;
 
     // 直播卡片内嵌的 audienceVC（IES / AWE 两种类名都挂），在其自身排布完之后
     // 再次上移底部内容，避免被它自己的布局覆盖。真实直播间里的同名 VC 不在卡片
