@@ -43,6 +43,9 @@ extern NSUInteger DYFSInteractionContainerAdjustCount;
 extern NSUInteger DYFSPlayerContentAdjustCount;
 extern NSUInteger DYFSLivePreviewPlayerAdjustCount;
 extern NSUInteger DYFSTabBarApplyCount;
+extern NSUInteger DYFSLiveCardLiftCount;
+extern NSUInteger DYFSBottomChromeHideCount;
+extern BOOL DYFSLiveCardHookInstalled;
 extern BOOL DYFSLastHomeTabSelected;
 extern BOOL DYFSLastTabBackgroundHidden;
 
@@ -70,6 +73,9 @@ extern NSString * const kDYFSClassSettingItemModel;   // AWESettingItemModel
 extern NSString * const kDYFSClassSettingSectionModel;   // AWESettingSectionModel
 extern NSString * const kDYFSClassLiveFeedCell;   // IESLiveInnerFeedLiveRoomCell
 extern NSString * const kDYFSClassBarBackground;   // _UIBarBackground
+extern NSString * const kDYFSClassDetailTable;   // AWEAwemeDetailTableViewController
+extern NSString * const kDYFSClassDetailCell;   // AWEAwemeDetailCellViewController
+extern NSString * const kDYFSClassMixPanel;   // AWEMixVideoPanelDetailTableViewController
 
 // 安装调度
 extern const NSUInteger kDYFSMaxInstallAttempts;      // 最多重试次数
