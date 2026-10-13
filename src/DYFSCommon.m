@@ -28,6 +28,9 @@ NSString * const kDYFSClassSettingItemModel = @"AWESettingItemModel";
 NSString * const kDYFSClassSettingSectionModel = @"AWESettingSectionModel";
 NSString * const kDYFSClassLiveFeedCell = @"IESLiveInnerFeedLiveRoomCell";
 NSString * const kDYFSClassBarBackground = @"_UIBarBackground";
+NSString * const kDYFSClassDetailTable = @"AWEAwemeDetailTableViewController";
+NSString * const kDYFSClassDetailCell = @"AWEAwemeDetailCellViewController";
+NSString * const kDYFSClassMixPanel = @"AWEMixVideoPanelDetailTableViewController";
 
 const NSUInteger kDYFSMaxInstallAttempts = 60;
 const NSTimeInterval kDYFSInstallRetryInterval = 1.0;
@@ -66,6 +69,9 @@ NSUInteger DYFSInteractionContainerAdjustCount = 0;
 NSUInteger DYFSPlayerContentAdjustCount = 0;
 NSUInteger DYFSLivePreviewPlayerAdjustCount = 0;
 NSUInteger DYFSTabBarApplyCount = 0;
+NSUInteger DYFSLiveCardLiftCount = 0;
+NSUInteger DYFSBottomChromeHideCount = 0;
+BOOL DYFSLiveCardHookInstalled = NO;
 BOOL DYFSLastHomeTabSelected = NO;
 BOOL DYFSLastTabBackgroundHidden = NO;
 
