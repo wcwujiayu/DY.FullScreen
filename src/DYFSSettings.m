@@ -28,7 +28,7 @@ static const NSTimeInterval kDYFSEntryMountDelay = 0.3;
 static NSString *DYFSStatusText(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"未知";
     return [NSString stringWithFormat:
-        @"抖音版本：%@（测试版本 %@）\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n推流预览播放器调整次数：%lu\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n\n设置项名称为“启用全屏”。普通视频与图集全屏独立调整；推流预览仅在播放器容器匹配高度条件时调整视频画面，不平移覆盖文案和按钮。\n版本匹配：%@",
+        @"抖音版本：%@（测试版本 %@）\n全屏开关：%@\n首页视频列表 Hook：%@\n互动控制器 Hook：%@\n互动层调整次数：%lu\n播放器画面调整次数：%lu\n推流预览播放器调整次数：%lu\n底栏透明 Hook：%lu/2\n侧边栏入口 Hook：%lu/2\n侧边栏全屏入口：%@\n原生设置页开关 Hook：%@\n原生设置页全屏开关：%@\n当前首页 Tab 选中：%@\n底栏背景已隐藏：%@\n底栏布局处理次数：%lu\n视频列表布局调整次数：%lu\n直播卡片 Hook：%@\n直播卡片底部上移次数：%lu\n贴底黑条清理次数：%lu\n\n设置项名称为“启用全屏”。普通视频与图集全屏独立调整；推流预览仅在播放器容器匹配高度条件时调整视频画面，不平移覆盖文案和按钮。\n版本匹配：%@",
         version, DYFSTestedVersion, DYFSIsEnabled() ? @"开启" : @"关闭",
         DYFSInstalledFeed ? @"已安装" : @"未找到类",
         DYFSInstalledInteractionController ? @"已安装" : @"未找到类",
@@ -44,7 +44,10 @@ static NSString *DYFSStatusText(void) {
         DYFSLastTabBackgroundHidden ? @"是" : @"否",
         (unsigned long)DYFSTabBarApplyCount,
         (unsigned long)DYFSLayoutFixCount,
-        DYFSVersionMismatch ? @"不一致，布局可能异常" : @"一致"];
+        DYFSVersionMismatch ? @"不一致，布局可能异常" : @"一致",
+        DYFSLiveCardHookInstalled ? @"已安装" : @"未找到 IESLiveInnerFeedLiveRoomCell",
+        (unsigned long)DYFSLiveCardLiftCount,
+        (unsigned long)DYFSBottomChromeHideCount];
 }
 
 // Forward declaration: DYFSSettingsActionTarget below calls into it.
