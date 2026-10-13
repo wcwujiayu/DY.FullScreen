@@ -26,7 +26,6 @@ jobs:
   build:
     name: Build rootful, rootless, roothide and dylib
     runs-on: macos-latest
-    needs: static-checks
     steps:
       - name: Check out source
         uses: actions/checkout@v4
