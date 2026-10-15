@@ -27,6 +27,9 @@ static IMP DYFSOriginalIMDetailRowHeight = NULL;
 static IMP DYFSOriginalMixPanelDetailLayout = NULL;
 static IMP DYFSOriginalLivePreStreamLayout = NULL;
 
+// 前向声明（定义在下方，供 DYFSDetailTableLayout 提前调用清黑板）
+static void DYFSDetailFullscreenPass(UIView *root);
+
 // 等父容器尺寸稳定后再匹配高度，避免与原生布局互相触发。
 // 0.05s：原来的 0.18s 会让"关掉评论区后画面先黑底、再拉伸"的过程肉眼可见。
 static const NSTimeInterval kDYFSPlayerSettleDelay = 0.05;
