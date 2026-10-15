@@ -23,6 +23,7 @@ static IMP DYFSOriginalElementStackLayout = NULL;
 static IMP DYFSOriginalDetailTableLayout = NULL;
 static IMP DYFSOriginalDetailCellLayout = NULL;
 static IMP DYFSOriginalDetailRowHeight = NULL;
+static IMP DYFSOriginalIMDetailRowHeight = NULL;
 static IMP DYFSOriginalMixPanelDetailLayout = NULL;
 static IMP DYFSOriginalLivePreStreamLayout = NULL;
 
@@ -240,10 +241,11 @@ static void DYFSDetailFullscreenPass(UIView *root) {
 
 // 行高对齐首页（两套机制的根本差异）：首页该 delegate 返回整屏 926；详情页返回 843，
 // 于是 cell 高 926 却按 843 排布 -> 滚一页停在 cell 中间（卡半截）。
-static CGFloat DYFSDetailRowHeight(id self, SEL cmd, UITableView *tableView, NSIndexPath *indexPath) {
+static CGFloat DYFSRowHeightWith(id self, SEL cmd, UITableView *tableView, NSIndexPath *indexPath,
+                                 IMP originalIMP) {
     CGFloat original = 0.0;
-    if (DYFSOriginalDetailRowHeight) {
-        original = ((CGFloat (*)(id, SEL, UITableView *, NSIndexPath *))DYFSOriginalDetailRowHeight)
+    if (originalIMP) {
+        original = ((CGFloat (*)(id, SEL, UITableView *, NSIndexPath *))originalIMP)
                    (self, cmd, tableView, indexPath);
     }
     if (!DYFSIsEnabled() || original <= 0.0) return original;
@@ -256,6 +258,16 @@ static CGFloat DYFSDetailRowHeight(id self, SEL cmd, UITableView *tableView, NSI
     CGFloat tabH = DYFSBottomTabBarHeight(view);
     if (fabs(winH - original - tabH) > MAX(2.0, tabH * 0.5)) return original;
     return winH;
+}
+
+static CGFloat DYFSDetailRowHeight(id self, SEL cmd, UITableView *tableView, NSIndexPath *indexPath) {
+    return DYFSRowHeightWith(self, cmd, tableView, indexPath, DYFSOriginalDetailRowHeight);
+}
+
+// 聊天分享的作品用的是 AWEAwemeIMDetailTableViewController，它自己 override 了
+// heightForRowAtIndexPath，只 hook 父类覆盖不到 —— 所以要单独挂一份。
+static CGFloat DYFSIMDetailRowHeight(id self, SEL cmd, UITableView *tableView, NSIndexPath *indexPath) {
+    return DYFSRowHeightWith(self, cmd, tableView, indexPath, DYFSOriginalIMDetailRowHeight);
 }
 
 void DYFSPlayerContentLayoutA(id self, SEL cmd) {
@@ -483,6 +495,13 @@ void DYFSLayoutInstallHooks(void) {
     if (cls && !detailRowHeightInstalled) {
         detailRowHeightInstalled = DYFSInstallHook(cls, @selector(tableView:heightForRowAtIndexPath:),
                     (IMP)DYFSDetailRowHeight, &DYFSOriginalDetailRowHeight);
+    }
+    // 聊天分享：IM 详情 VC 自己 override 了行高方法，必须单独挂
+    static BOOL imDetailRowHeightInstalled = NO;
+    cls = NSClassFromString(@"AWEAwemeIMDetailTableViewController");
+    if (cls && !imDetailRowHeightInstalled) {
+        imDetailRowHeightInstalled = DYFSInstallHook(cls, @selector(tableView:heightForRowAtIndexPath:),
+                    (IMP)DYFSIMDetailRowHeight, &DYFSOriginalIMDetailRowHeight);
     }
     cls = NSClassFromString(kDYFSClassMixPanel);
     if (cls && !DYFSInstalledMixPanelDetail) {
