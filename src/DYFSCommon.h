@@ -114,3 +114,5 @@ BOOL DYFSIsNamedChrome(UIView *view);
 BOOL DYFSIsPlainBacking(UIView *view);
 BOOL DYFSIsDarkBackgroundView(UIView *view);
 void DYFSClearOwnBackground(UIView *view);
+// 只把「纯黑不透明」底板清成透明（改颜色，不动 frame）。
+void DYFSClearOpaqueBlackBackground(UIView *view);
