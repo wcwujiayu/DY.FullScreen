@@ -33,6 +33,7 @@ static char kDYFSPlayerParentHeightKey;
 static char kDYFSPlayerSettledGeometryKey;
 CGFloat DYFSBottomTabBarHeight(UIView *view) {
     UIWindow *window = view.window;
+    if (!window) window = UIApplication.sharedApplication.windows.firstObject;
     if (window) {
         UIView *tabBar = DYFSFindSubviewOfClass(window, @"AWENormalModeTabBar", 0);
         CGFloat measured = CGRectGetHeight(tabBar.bounds);
@@ -41,7 +42,8 @@ CGFloat DYFSBottomTabBarHeight(UIView *view) {
         }
         return 49.0 + MAX(0.0, window.safeAreaInsets.bottom);
     }
-    return 49.0;
+    // 兜底必须跟上面一致（49+安全区34=83）。返回 49 会让互动层算成 877，UI 会掉一截。
+    return 83.0;
 }
 
 void DYFSDetailTableLayout(id self, SEL cmd) {
@@ -51,6 +53,15 @@ void DYFSDetailTableLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
     DYFSTransparencyApplyInView(root);
+    // 表格也必须拉满：只拉 cell 会出现 cell(926)/表格(843) 不一致 -> 分页错位（滑动卡半截）+ 视频被裁
+    UIView *table = DYFSFindSubviewOfClass(root, @"AWEAwemeDetailTableView", 0);
+    CGFloat winH = root.window ? CGRectGetHeight(root.window.bounds) : 0.0;
+    CGFloat tabH = DYFSBottomTabBarHeight(root);
+    if (table && winH > 0.0 && fabs(winH - CGRectGetHeight(table.bounds) - tabH) <= MAX(2.0, tabH * 0.5)) {
+        CGRect frame = table.frame;
+        frame.size.height = winH;
+        table.frame = frame;
+    }
 }
 
 void DYFSDetailCellLayout(id self, SEL cmd) {
@@ -88,15 +99,12 @@ void DYFSInteractionControllerLayout(id self, SEL cmd) {
     CGFloat targetHeight = parentHeight - tabBarHeight;
 
     if (!DYFSIsFeedCellInteractionController(controller)) {
-        // 详情页：容器被拉满后，互动层按「整屏 - 底栏」算，不跟着父容器一起拉高，
-        // 否则账号/文案/进度条/右侧按钮会被推到底栏下方（0.5.6~0.5.8 的位移）。
-        // 父容器可能是超过整屏的图文容器，故取 min。
+        // 父容器必须先被拉到整屏才处理（父高 843 时算出 760 会把 UI 顶上去）；图文容器可能超整屏，故取 min。
         UIWindow *window = view.window;
         CGFloat winH = window ? CGRectGetHeight(window.bounds) : 0.0;
         BOOL inDetail = DYFSInProfileContext(view) || DYFSIsDetailVideoContext(view) ||
                         DYFSIsIMDetailContext(view);
-        if (!inDetail || winH <= 0.0 ||
-            parentHeight < winH - tabBarHeight - MAX(2.0, tabBarHeight * 0.5)) return;
+        if (!inDetail || winH <= 0.0 || parentHeight < winH - MAX(2.0, tabBarHeight * 0.5)) return;
         targetHeight = MIN(parentHeight, winH) - tabBarHeight;
     }
 
@@ -113,8 +121,7 @@ void DYFSInteractionControllerLayout(id self, SEL cmd) {
     frame.size.height = targetHeight;
     view.frame = frame;
     DYFSInteractionContainerAdjustCount++;
-    DYFSLog([NSString stringWithFormat:@"interaction height %.2f -> %.2f (parent %.2f, tab %.2f)",
-             oldHeight, targetHeight, parentHeight, tabBarHeight]);
+    DYFSLog([NSString stringWithFormat:@"interaction h %.2f -> %.2f (parent %.2f, tab %.2f)", oldHeight, targetHeight, parentHeight, tabBarHeight]);
 }
 
 static void DYFSApplyPlayerContentHeightNow(id playerController) {
@@ -155,9 +162,7 @@ static void DYFSApplyPlayerContentHeightNow(id playerController) {
     frame.size.height = targetHeight;
     contentView.frame = frame;
     DYFSPlayerContentAdjustCount++;
-    DYFSLog([NSString stringWithFormat:
-        @"%@ contentView height %.2f -> %.2f (parent %.2f, diff %.2f, tab bar %.2f)",
-        NSStringFromClass([playerController class]), currentHeight, targetHeight, parentHeight, diff, tabBarHeight]);
+    DYFSLog([NSString stringWithFormat:@"%@ contentView h %.2f -> %.2f (parent %.2f, diff %.2f, tab %.2f)", NSStringFromClass([playerController class]), currentHeight, targetHeight, parentHeight, diff, tabBarHeight]);
 }
 
 static void DYFSSchedulePlayerContentHeight(id playerController) {
@@ -335,9 +340,7 @@ void DYFSStoryContainerLayout(id self, SEL cmd) {
         frame.size.height = targetHeight;
         subview.frame = frame;
         DYFSInteractionContainerAdjustCount++;
-        DYFSLog([NSString stringWithFormat:
-            @"home interaction layer height %.2f -> %.2f (parent %.2f, tab bar %.2f)",
-            oldHeight, targetHeight, parentHeight, tabBarHeight]);
+        DYFSLog([NSString stringWithFormat:@"home interaction h %.2f -> %.2f (parent %.2f, tab %.2f)", oldHeight, targetHeight, parentHeight, tabBarHeight]);
     }
 }
 
@@ -379,9 +382,7 @@ static void DYFSAdjustLivePreStreamBottomPanel(UIView *container) {
     CGFloat shift = visualBottom - targetBottom;
     if (fabs(shift) > 1.0) {
         panel.transform = CGAffineTransformTranslate(panel.transform, 0.0, -shift);
-        DYFSLog([NSString stringWithFormat:
-                 @"live pre-stream bottom panel shifted %.2f (bottom %.2f -> %.2f)",
-                 -shift, visualBottom, targetBottom]);
+        DYFSLog([NSString stringWithFormat:@"live panel shifted %.2f (bottom %.2f -> %.2f)", -shift, visualBottom, targetBottom]);
     }
 }
 
@@ -422,8 +423,7 @@ void DYFSFeedTableLayout(id self, SEL cmd) {
     frame.size.height = targetHeight;
     view.frame = frame;
     DYFSLayoutFixCount++;
-    DYFSLog([NSString stringWithFormat:@"AWEFeedTableView frame y %.2f -> %.2f, height %.2f -> %.2f",
-             oldY, CGRectGetMinY(frame), oldHeight, targetHeight]);
+    DYFSLog([NSString stringWithFormat:@"feed table y %.2f -> %.2f, h %.2f -> %.2f", oldY, CGRectGetMinY(frame), oldHeight, targetHeight]);
 }
 
 void DYFSLayoutInstallHooks(void) {
