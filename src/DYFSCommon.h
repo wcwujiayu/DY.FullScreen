@@ -27,10 +27,6 @@ extern BOOL DYFSInstalledTabBarDidMove;
 extern BOOL DYFSInstalledTabBarDidAddSubview;
 extern BOOL DYFSInstalledInteractionProgress;
 extern BOOL DYFSInstalledPlayerProgress;
-extern BOOL DYFSInstalledCommentPanel;
-extern BOOL DYFSInstalledCommentInputContainer;
-extern BOOL DYFSInstalledCommentInputBackground;
-extern BOOL DYFSInstalledCommentInputController;
 extern BOOL DYFSInstalledDetailTable;
 extern BOOL DYFSInstalledDetailCell;
 extern BOOL DYFSInstalledMixPanelDetail;
@@ -48,7 +44,6 @@ extern NSUInteger DYFSInteractionContainerAdjustCount;
 extern NSUInteger DYFSPlayerContentAdjustCount;
 extern NSUInteger DYFSTabBarApplyCount;
 extern NSUInteger DYFSBottomChromeHideCount;
-extern NSUInteger DYFSCommentBarTransparencyApplyCount;
 extern BOOL DYFSLastHomeTabSelected;
 extern BOOL DYFSLastTabBackgroundHidden;
 
@@ -77,10 +72,6 @@ extern NSString * const kDYFSClassDetailTable;   // AWEAwemeDetailTableViewContr
 extern NSString * const kDYFSClassDetailCell;   // AWEAwemeDetailCellViewController
 extern NSString * const kDYFSClassMixPanel;   // AWEMixVideoPanelDetailTableViewController
 extern NSString * const kDYFSClassElementStack;   // AWEElementStackView
-extern NSString * const kDYFSClassCommentPanel;   // AWECommentPanelContainerSwiftImpl.CommentContainerInnerViewController
-extern NSString * const kDYFSClassCommentInputContainer;   // AWECommentInputViewSwiftImpl.CommentInputContainerView
-extern NSString * const kDYFSClassCommentInputBackground;   // AWECommentInputBackgroundView
-extern NSString * const kDYFSClassCommentInputController;   // AWECommentInputViewController
 
 // 安装调度
 extern const NSUInteger kDYFSMaxInstallAttempts;      // 最多重试次数

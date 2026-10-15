@@ -4,7 +4,7 @@
 //
 //  入口：安装各模块的 hook 并持续重试，直到抖音懒加载的类都已就绪。
 //  真正的逻辑分散在 DYFSLayout / DYFSChrome / DYFSTransparency /
-//  DYFSComment / DYFSSettings 五个模块里，本文件不做具体处理。
+//  DYFSSettings 四个模块里，本文件不做具体处理。
 //
 
 #import <Foundation/Foundation.h>
@@ -14,7 +14,6 @@
 #import "DYFSCommon.h"
 #import "DYFSLayout.h"
 #import "DYFSChrome.h"
-#import "DYFSComment.h"
 #import "DYFSSettings.h"
 
 // 启动后两次重排：第一次消化初始布局，第二次修正延迟加载的视图
@@ -27,22 +26,19 @@ static void DYFSInstallHooks(void) {
 
     DYFSLayoutInstallHooks();      // 全屏尺寸修正（0.3.15 逻辑）
     DYFSChromeInstallHooks();      // 底栏与进度条透明
-    DYFSCommentInstallHooks();     // 评论区 / 输入栏透明（0.3.15 独有）
     DYFSSettingsInstallHooks();    // 侧边栏入口与原生设置开关
     // 去灰底（DYFSTransparency）没有独立 hook，
     // 由上述 layout hook 在布局完成后触发。
 
     NSString *summary = [NSString stringWithFormat:
         @"video-list %@; story-container %@; interaction-controller %@; player-content %d/3; "
-        @"element-stack %@; comment hooks %d/4; detail hooks %d/3; "
+        @"element-stack %@; detail hooks %d/3; "
         @"tab bar hooks %lu/2; settings-switch %@",
         DYFSInstalledFeed ? @"on" : @"off",
         DYFSInstalledStory ? @"on" : @"off",
         DYFSInstalledInteractionController ? @"on" : @"off",
         (int)DYFSInstalledPlayerContentA + (int)DYFSInstalledPlayerContentB + (int)DYFSInstalledPlayerContentC,
         DYFSInstalledElementStack ? @"on" : @"off",
-        (int)DYFSInstalledCommentPanel + (int)DYFSInstalledCommentInputContainer +
-        (int)DYFSInstalledCommentInputBackground + (int)DYFSInstalledCommentInputController,
         (int)DYFSInstalledDetailTable + (int)DYFSInstalledDetailCell + (int)DYFSInstalledMixPanelDetail,
         (unsigned long)DYFSTabBarHookCount(),
         DYFSInstalledNativeSettingsSwitch ? @"on" : @"off"];

@@ -40,13 +40,19 @@ total=$(cat src/*.m | wc -l | tr -d ' ')
 ok "源码总行数: $total"
 
 echo "== 3. 已移除功能不得复活 =="
-# 注意：评论区透明化（DYFSApplyVideoDetailBottomTransparencyInView /
-# DYFSCommentPanelLayout）是 0.3.15 的功能，本次重建有意保留，不在此列。
+# 评论区 / 视频详情底部透明化（DYFSApplyVideoDetailBottomTransparencyInView 及
+# DYFSComment*Layout）是 0.3.15 的功能，0.4.x 实测无效后删除；本次按用户要求移除，
+# 避免把视频文案、评论输入栏误透明导致看不见。加入下面数组防止将来复活。
 removed=(
   "DYFSApplyRecommendationTransparencyInView"   # 0.3.15 版去灰底，已由 0.4.x 取代
   "DYFSNativeSettingsCellForRow"
   "DYFSFindLabelWithText"
   "DYFSClearSmallCardChrome"                    # 0.3.15 去灰底配套，已无调用者
+  "DYFSApplyVideoDetailBottomTransparencyInView"
+  "DYFSCommentPanelLayout"
+  "DYFSCommentInputContainerLayout"
+  "DYFSCommentInputBackgroundLayout"
+  "DYFSCommentInputControllerLayout"
 )
 for sym in "${removed[@]}"; do
   if grep -rq "$sym" src/; then
@@ -68,7 +74,7 @@ else
 fi
 
 echo "== 5. 模块划分完整性 =="
-for mod in DYFSCommon DYFSContext DYFSLayout DYFSChrome DYFSComment DYFSSettings DYFSTransparency; do
+for mod in DYFSCommon DYFSContext DYFSLayout DYFSChrome DYFSSettings DYFSTransparency; do
   if [ -f "src/$mod.h" ] && [ -f "src/$mod.m" ]; then
     ok "$mod.h / $mod.m 成对存在"
   else

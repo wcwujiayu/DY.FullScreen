@@ -10,7 +10,6 @@
 #import "DYFSCommon.h"
 #import "DYFSContext.h"
 #import "DYFSTransparency.h"
-#import "DYFSComment.h"
 #import <objc/message.h>
 #import <math.h>
 
@@ -50,7 +49,6 @@ void DYFSDetailTableLayout(id self, SEL cmd) {
     }
     if (!DYFSIsEnabled()) return;
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
-    DYFSApplyVideoDetailBottomTransparencyInView(root);
     DYFSTransparencyApplyInView(root);
 }
 
@@ -60,7 +58,6 @@ void DYFSDetailCellLayout(id self, SEL cmd) {
     }
     if (!DYFSIsEnabled()) return;
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
-    DYFSApplyVideoDetailBottomTransparencyInView(root);
     DYFSTransparencyApplyInView(root);
 }
 
@@ -70,7 +67,6 @@ void DYFSMixPanelDetailLayout(id self, SEL cmd) {
     }
     if (!DYFSIsEnabled()) return;
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
-    DYFSApplyVideoDetailBottomTransparencyInView(root);
     DYFSTransparencyApplyInView(root);
 }
 
@@ -116,7 +112,6 @@ static void DYFSApplyPlayerContentHeightNow(id playerController) {
     UIView *contentView = DYFSSafeValueForKey(playerController, @"contentView");
     if (DYFSInProfileContext(controllerView) || DYFSInProfileContext(contentView) ||
         DYFSIsDetailVideoContext(controllerView) || DYFSIsDetailVideoContext(contentView)) {
-        DYFSApplyVideoDetailBottomTransparencyInView(controllerView);
         return;
     }
     if (![contentView isKindOfClass:UIView.class] || !contentView.superview ||
@@ -158,8 +153,6 @@ static void DYFSSchedulePlayerContentHeight(id playerController) {
         ? (UIViewController *)playerController : nil;
     UIView *controllerView = controllerViewController.view;
     if (DYFSInProfileContext(controllerView) || DYFSIsDetailVideoContext(controllerView)) {
-        DYFSApplyVideoDetailBottomTransparencyInView(controllerView);
-        if (controllerView.superview) DYFSApplyVideoDetailBottomTransparencyInView(controllerView.superview);
         return;
     }
 
@@ -220,10 +213,6 @@ void DYFSPlayerContentLayoutA(id self, SEL cmd) {
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
-    if (DYFSInProfileContext(root) || DYFSIsDetailVideoContext(root)) {
-        DYFSApplyVideoDetailBottomTransparencyInView(root);
-        if (root.superview) DYFSApplyVideoDetailBottomTransparencyInView(root.superview);
-    }
     DYFSSchedulePlayerContentHeight(self);
 }
 
@@ -232,10 +221,6 @@ void DYFSPlayerContentLayoutB(id self, SEL cmd) {
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
-    if (DYFSInProfileContext(root) || DYFSIsDetailVideoContext(root)) {
-        DYFSApplyVideoDetailBottomTransparencyInView(root);
-        if (root.superview) DYFSApplyVideoDetailBottomTransparencyInView(root.superview);
-    }
     DYFSSchedulePlayerContentHeight(self);
 }
 
@@ -244,10 +229,6 @@ void DYFSPlayerContentLayoutC(id self, SEL cmd) {
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
-    if (DYFSInProfileContext(root) || DYFSIsDetailVideoContext(root)) {
-        DYFSApplyVideoDetailBottomTransparencyInView(root);
-        if (root.superview) DYFSApplyVideoDetailBottomTransparencyInView(root.superview);
-    }
     DYFSSchedulePlayerContentHeight(self);
 }
 
