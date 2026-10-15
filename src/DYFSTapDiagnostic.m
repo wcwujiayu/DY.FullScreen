@@ -47,7 +47,7 @@ static NSString *DYFSAwemeID(id aweme) {
 // 从宫格 VC 的数据源里取某 indexPath 对应的 awemeId
 static NSString *DYFSGridAwemeID(id self, NSIndexPath *ip) {
     NSArray<NSString *> *srcKeys = @[@"awemes", @"list", @"items", @"dataList", @"awemeList", @"dataArray"];
-    id arr = nil;
+    NSArray *arr = nil;
     for (id src in @[self, DYFSSafeValueForKey(self, @"viewModel")]) {
         if (!src) continue;
         for (NSString *k in srcKeys) {
@@ -78,8 +78,11 @@ static NSString *DYFSDetailAwemeID(id self) {
 
 static void DYFSShowTapDiag(NSString *text) {
     if (!text.length) return;
-    UIWindow *win = UIApplication.sharedApplication.keyWindow;
-    if (!win) win = UIApplication.sharedApplication.windows.lastObject;
+    UIWindow *win = nil;
+    for (UIWindow *w in UIApplication.sharedApplication.windows) {
+        if (w.isKeyWindow) { win = w; break; }
+    }
+    if (!win) win = UIApplication.sharedApplication.windows.firstObject;
     if (!win) return;
 
     if (!gTapDiagLabel) {
