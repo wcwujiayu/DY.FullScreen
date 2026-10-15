@@ -20,6 +20,19 @@ static const NSUInteger kDYFSTransparencyMaxDepth = 10;
 #pragma mark - 视图探测
 
 static NSString *DYFSTextForView(UIView *view) {
+    // YYLabel / YYText 等富文本 label 并不是 UILabel 子类，先用通用属性兜底。
+    if ([view respondsToSelector:@selector(attributedText)]) {
+        id attr = [view performSelector:@selector(attributedText)];
+        if ([attr isKindOfClass:NSAttributedString.class] && [(NSAttributedString *)attr length] > 0) {
+            return [(NSAttributedString *)attr string];
+        }
+    }
+    if ([view respondsToSelector:@selector(text)]) {
+        id text = [view performSelector:@selector(text)];
+        if ([text isKindOfClass:NSString.class] && [(NSString *)text length] > 0) {
+            return text;
+        }
+    }
     if ([view isKindOfClass:UILabel.class]) {
         UILabel *label = (UILabel *)view;
         return label.attributedText.string ?: label.text ?: @"";
@@ -32,6 +45,26 @@ static NSString *DYFSTextForView(UIView *view) {
         return [(UIButton *)view titleForState:UIControlStateNormal] ?: @"";
     }
     return view.accessibilityLabel ?: @"";
+}
+
+// 视频文案 / 描述 label：这些视图的文字必须保留，不能被「去灰底」误清或误隐藏。
+static BOOL DYFSIsCaptionDescriptionView(UIView *view) {
+    if (!view) return NO;
+    NSString *name = NSStringFromClass(view.class);
+    return [name containsString:@"Description"] ||
+        [name containsString:@"Caption"] ||
+        [name containsString:@"DescLabel"] ||
+        [name containsString:@"ContentText"];
+}
+
+// 判断以 view 为根的子树是否包含文案/描述视图（用于保护容器不被整层隐藏）。
+static BOOL DYFSSubtreeHasCaptionDescription(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+    if (DYFSIsCaptionDescriptionView(view)) return YES;
+    for (UIView *sub in view.subviews) {
+        if (DYFSSubtreeHasCaptionDescription(sub, depth + 1)) return YES;
+    }
+    return NO;
 }
 
 static BOOL DYFSSubtreeHasText(UIView *view, NSUInteger depth) {
@@ -101,6 +134,8 @@ static void DYFSClearOwnBackground(UIView *view) {
 // 递归清除目标子树的背景。文字颜色、alpha、图标、交互都不改。
 static void DYFSClearChromeTree(UIView *view, NSUInteger depth) {
     if (!view || depth > kDYFSTransparencyMaxDepth) return;
+    // 保护视频文案/描述 label，避免文字被误清。
+    if (DYFSIsCaptionDescriptionView(view)) return;
     DYFSClearOwnBackground(view);
     for (UIView *sub in [view.subviews copy]) {
         DYFSClearChromeTree(sub, depth + 1);
@@ -162,8 +197,9 @@ static void DYFSHideDarkBottomChrome(UIView *root, UIView *reference) {
         [pending removeLastObject];
         [pending addObjectsFromArray:view.subviews];
         if (view.hidden || view.alpha <= 0.01) continue;
-        // 有文字或有控件的容器一律保留，只清背景
-        if (DYFSSubtreeHasText(view, 0) || DYFSSubtreeHasControl(view, 0)) continue;
+        // 有文字、有控件、含视频文案/描述的容器一律保留，只清背景
+        if (DYFSSubtreeHasText(view, 0) || DYFSSubtreeHasControl(view, 0) ||
+            DYFSSubtreeHasCaptionDescription(view, 0)) continue;
 
         CGRect rect = [view convertRect:view.bounds toView:reference];
         if (CGRectGetMinY(rect) < limitY) continue;
@@ -184,6 +220,8 @@ static void DYFSClearDarkChromeTree(UIView *view, NSUInteger depth) {
     if (!view || depth > 8) return;
     for (UIView *sub in [view.subviews copy]) {
         if (sub.hidden || sub.alpha <= 0.01) continue;
+        // 视频文案/描述容器：只保留，不进入背景清理。
+        if (DYFSIsCaptionDescriptionView(sub) || DYFSSubtreeHasCaptionDescription(sub, 0)) continue;
         BOOL isPlain = !DYFSSubtreeHasText(sub, 0) && !DYFSSubtreeHasControl(sub, 0);
         BOOL isEffect = [sub isKindOfClass:UIVisualEffectView.class];
         if (isPlain && (DYFSIsDarkBackgroundView(sub) || DYFSIsNamedChrome(sub) || isEffect)) {
@@ -214,6 +252,8 @@ static void DYFSClearBottomBarChrome(UIView *reference) {
         [pending removeLastObject];
         [pending addObjectsFromArray:view.subviews];
         if (view == reference || view.hidden || view.alpha <= 0.01) continue;
+        // 保护视频文案/描述容器，不能被当成贴底黑条处理。
+        if (DYFSIsCaptionDescriptionView(view) || DYFSSubtreeHasCaptionDescription(view, 0)) continue;
 
         CGRect rect = [view convertRect:view.bounds toView:reference];
         CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
@@ -312,44 +352,6 @@ static void DYFSApplyCardTransparency(UIView *root, UIView *reference) {
     }
 }
 
-NSString *DYFSBottomViewDump(void) {
-    UIWindow *window = nil;
-    for (UIWindow *candidate in UIApplication.sharedApplication.windows.reverseObjectEnumerator) {
-        if (candidate.isKeyWindow) { window = candidate; break; }
-    }
-    if (!window) window = UIApplication.sharedApplication.windows.lastObject;
-    if (!window) return @"（取不到窗口）";
-
-    CGFloat refW = CGRectGetWidth(window.bounds), refH = CGRectGetHeight(window.bounds);
-    NSMutableArray<NSString *> *lines = [NSMutableArray array];
-    [lines addObject:[NSString stringWithFormat:@"顶层VC %@",
-                      NSStringFromClass(DYFSActiveTopViewController().class)]];
-    if (refW < 100.0 || refH < 200.0) return [lines componentsJoinedByString:@"\n"];
-
-    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:window];
-    NSMutableSet<NSString *> *seen = [NSMutableSet set];
-    NSUInteger visited = 0;
-    while (pending.count > 0 && visited < 600 && lines.count < 8) {
-        visited++;
-        UIView *view = pending.lastObject;
-        [pending removeLastObject];
-        [pending addObjectsFromArray:view.subviews];
-        if (view == window || view.hidden || view.alpha <= 0.01) continue;
-
-        CGRect rect = [view convertRect:view.bounds toView:window];
-        CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
-        if (w < refW * 0.6 || h < 20.0 || h > 170.0) continue;
-        if (CGRectGetMinY(rect) < refH - 220.0) continue;
-
-        NSString *name = NSStringFromClass(view.class);
-        if ([seen containsObject:name]) continue;
-        [seen addObject:name];
-        [lines addObject:[NSString stringWithFormat:@"%@ (%.0fx%.0f, y %.0f)",
-                          name, w, h, CGRectGetMinY(rect)]];
-    }
-    return [lines componentsJoinedByString:@"\n"];
-}
-
 #pragma mark - 入口
 
 // 直接定位全局底栏（AWENormalModeTabBar），隐藏其背景与分割线。
@@ -410,6 +412,8 @@ static void DYFSApplyInteractionTransparency(UIView *root) {
     for (UIView *sub in [root.subviews copy]) {
         if ([sub isKindOfClass:[UIView class]] && sub.backgroundColor &&
             CGColorEqualToColor(sub.backgroundColor.CGColor, [UIColor blackColor].CGColor)) {
+            // 不要隐藏包含视频文案/描述的子视图（例如底部文案容器）。
+            if (DYFSIsCaptionDescriptionView(sub) || DYFSSubtreeHasCaptionDescription(sub, 0)) continue;
             DYFSBackupAppearance(sub);
             sub.hidden = YES;
         }
