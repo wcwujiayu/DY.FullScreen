@@ -7,14 +7,11 @@
 //  awemeId，并与上一次宫格点对比，给出「一致 / 不一致」判定。
 //  默认关闭，由诊断页开关启用，不进入任何高频路径，不影响正常布局。
 //
-//  0.5.17 重写：
-//   · 去掉原来脆弱的「可见 cell 必须叫 AWEUserWorkCollectionViewComponentCell」闸门
-//     （40.7.0 宫格 cell 类名未必命中 → 整段静默跳过，横幅从不出现）。
-//     本 hook 只挂在 AWEDCFeedListViewController 上，它本身就是 profile/喜欢/收藏
-//     宫格，直接显示即可。
-//   · 原来「宫格点」与「详情打开」用同一个 label、各 4s 隐藏 → 详情横幅瞬间覆盖
-//     宫格横幅，且 keyWindow 切换时可能不渲染。改为：单个持久 label，每次事件更新
-//     文本并统一 8s 隐藏，挂到最上层窗口并置顶。详情横幅会合并显示上一次宫格点的信息。
+//  0.5.18 改进：
+//   · 宫格数据源支持多 section（section 0 个人信息，section 1 视频网格），按 section
+//     取子数组后再按 item/row 取元素。
+//   · 增加 cell 递归扫描与更全数据源 key 作为 fallback。
+//   · 列表 aweme 取不到时显示调试信息（命中 key / 数组长度 / section），帮助继续定位。
 //
 
 #import "DYFSTapDiagnostic.h"
@@ -30,6 +27,7 @@ static NSTimeInterval gTapDiagLastShow = 0;
 static NSString *gLastGridItem = nil;     // @"sec,item"
 static NSString *gLastGridListAid = nil;  // 列表 awemeId
 static NSTimeInterval gLastGridTime = 0;
+static NSString *gLastGridSearchDebug = nil;
 
 BOOL DYFSTapDiagnosticEnabled(void) { return gTapDiagEnabled; }
 void DYFSTapDiagnosticSetEnabled(BOOL enabled) { gTapDiagEnabled = enabled; }
@@ -48,6 +46,8 @@ static BOOL DYFSSwapMethod(Class cls, SEL sel, IMP newImp, IMP *origImp) {
 // best-effort 从 aweme 模型里抠出 id（抖音私有字段，多试几个）
 static NSString *DYFSAwemeID(id aweme) {
     if (!aweme) return nil;
+    if ([aweme isKindOfClass:NSString.class]) return (NSString *)aweme;
+    if ([aweme isKindOfClass:NSNumber.class]) return [aweme stringValue];
     NSArray<NSString *> *keys = @[@"awemeID", @"awemeId", @"aweme_id", @"cid",
                                   @"awemeIdStr", @"itemId", @"awemeIDStr"];
     for (NSString *k in keys) {
@@ -59,23 +59,130 @@ static NSString *DYFSAwemeID(id aweme) {
     return nil;
 }
 
-// 从宫格 VC 的数据源里取某 indexPath 对应的 awemeId
-static NSString *DYFSGridAwemeID(id self, NSIndexPath *ip) {
-    NSArray<NSString *> *srcKeys = @[@"awemes", @"list", @"items", @"dataList", @"awemeList", @"dataArray"];
-    NSArray *arr = nil;
-    for (id src in @[self, DYFSSafeValueForKey(self, @"viewModel")]) {
+// 递归扫描对象，寻找看起来像 awemeId 的字符串（>=15 位纯数字）。
+static NSString *DYFSScanAwemeIdDeep(id obj, NSUInteger depth) {
+    if (!obj || depth > 6) return nil;
+    if ([obj isKindOfClass:NSString.class]) {
+        NSString *s = (NSString *)obj;
+        if (s.length >= 15 && [s rangeOfCharacterFromSet:[[NSCharacterSet decimalDigitCharacterSet] invertedSet]].location == NSNotFound) return s;
+        return nil;
+    }
+    if ([obj isKindOfClass:NSNumber.class]) {
+        NSString *s = [obj stringValue];
+        if (s.length >= 15) return s;
+        return nil;
+    }
+    if ([obj isKindOfClass:NSArray.class]) {
+        for (id item in (NSArray *)obj) {
+            NSString *found = DYFSScanAwemeIdDeep(item, depth + 1);
+            if (found) return found;
+        }
+        return nil;
+    }
+    if ([obj isKindOfClass:NSSet.class]) {
+        for (id item in (NSSet *)obj) {
+            NSString *found = DYFSScanAwemeIdDeep(item, depth + 1);
+            if (found) return found;
+        }
+        return nil;
+    }
+    if ([obj isKindOfClass:NSDictionary.class]) {
+        NSDictionary *d = (NSDictionary *)obj;
+        for (NSString *k in @[@"awemeId", @"awemeID", @"aweme_id", @"itemId", @"cid"]) {
+            id v = [d objectForKey:k];
+            NSString *found = DYFSScanAwemeIdDeep(v, depth + 1);
+            if (found) return found;
+        }
+        for (id v in d.allValues) {
+            NSString *found = DYFSScanAwemeIdDeep(v, depth + 1);
+            if (found) return found;
+        }
+        return nil;
+    }
+    Class cls = [obj class];
+    if (!cls) return nil;
+    unsigned int count = 0;
+    Ivar *ivars = class_copyIvarList(cls, &count);
+    if (ivars) {
+        for (unsigned int i = 0; i < count; i++) {
+            id v = object_getIvar(obj, ivars[i]);
+            NSString *found = DYFSScanAwemeIdDeep(v, depth + 1);
+            if (found) { free(ivars); return found; }
+        }
+        free(ivars);
+    }
+    objc_property_t *props = class_copyPropertyList(cls, &count);
+    if (props) {
+        for (unsigned int i = 0; i < count; i++) {
+            NSString *name = [NSString stringWithUTF8String:property_getName(props[i])];
+            id v = DYFSSafeValueForKey(obj, name);
+            NSString *found = DYFSScanAwemeIdDeep(v, depth + 1);
+            if (found) { free(props); return found; }
+        }
+        free(props);
+    }
+    return nil;
+}
+
+// 从宫格 VC 的数据源里取某 indexPath 对应的 awemeId。
+static NSString *DYFSGridAwemeID(id self, NSIndexPath *ip, UICollectionViewCell *cell) {
+    gLastGridSearchDebug = @"no_src";
+    NSArray<NSString *> *srcKeys = @[@"awemes", @"list", @"items", @"dataList", @"awemeList",
+                                     @"dataArray", @"awemeModels", @"itemModels", @"cellModels",
+                                     @"itemsArray", @"data", @"feeds", @"videos", @"models",
+                                     @"dataSource", @"feedList", @"cellData"];
+    NSArray *rootArr = nil;
+    id rootSrc = nil;
+    NSString *hitKey = nil;
+    for (id src in @[self, DYFSSafeValueForKey(self, @"viewModel"),
+                     DYFSSafeValueForKey(self, @"dataViewModel"),
+                     DYFSSafeValueForKey(self, @"listViewModel")]) {
         if (!src) continue;
         for (NSString *k in srcKeys) {
             id v = DYFSSafeValueForKey(src, k);
-            if ([v isKindOfClass:NSArray.class] && [(NSArray *)v count] > 0) { arr = v; break; }
+            if ([v isKindOfClass:NSArray.class] && [(NSArray *)v count] > 0) {
+                rootArr = v; rootSrc = src; hitKey = k; break;
+            }
         }
-        if (arr) break;
+        if (rootArr) break;
     }
-    if (!arr || arr.count == 0) return nil;
-    NSInteger idx = (ip && ip.item < (NSInteger)arr.count) ? ip.item
-                  : (ip && ip.row < (NSInteger)arr.count) ? ip.row : NSNotFound;
-    if (idx == NSNotFound) return nil;
-    return DYFSAwemeID(arr[idx]);
+
+    NSInteger section = ip ? ip.section : 0;
+    NSInteger item    = ip ? ip.item : (ip ? ip.row : 0);
+
+    if (rootArr) {
+        gLastGridSearchDebug = [NSString stringWithFormat:@"key=%@ len=%lu sec=%ld",
+                                hitKey ?: @"?", (unsigned long)rootArr.count, (long)section];
+        if ((NSInteger)rootArr.count > section) {
+            id secObj = rootArr[section];
+            // 多 section：每个 section 是一个 NSArray
+            if ([secObj isKindOfClass:NSArray.class] && (NSInteger)[(NSArray *)secObj count] > item) {
+                NSString *aid = DYFSAwemeID(secObj[item]);
+                if (aid) return aid;
+                gLastGridSearchDebug = [NSString stringWithFormat:@"key=%@ sec_len=%lu item=%ld no_id",
+                                        hitKey ?: @"?", (unsigned long)[(NSArray *)secObj count], (long)item];
+            }
+            // 单 section 退化：直接用 item 取
+            if (item < (NSInteger)rootArr.count) {
+                NSString *aid = DYFSAwemeID(rootArr[item]);
+                if (aid) return aid;
+            }
+            // 用 row 再试
+            NSInteger row = ip ? ip.row : item;
+            if (row != item && row < (NSInteger)rootArr.count) {
+                NSString *aid = DYFSAwemeID(rootArr[row]);
+                if (aid) return aid;
+            }
+        }
+    }
+
+    // fallback：从 cell 本身递归扫描 awemeId
+    if (cell) {
+        NSString *fromCell = DYFSScanAwemeIdDeep(cell, 0);
+        if (fromCell) return fromCell;
+    }
+
+    return nil;
 }
 
 // 从详情 VC 抠出当前 awemeId
@@ -91,7 +198,6 @@ static NSString *DYFSDetailAwemeID(id self) {
 
 #pragma mark - 屏幕横幅（单个持久 label）
 
-// 选最上层、可见的窗口（优先 keyWindow，否则取最高 windowLevel）
 static UIWindow *DYFSTopWindow(void) {
     UIWindow *key = nil;
     UIWindow *best = nil;
@@ -121,15 +227,13 @@ static void DYFSShowTapDiag(NSString *text) {
         gTapDiagLabel.adjustsFontSizeToFitWidth = NO;
         gTapDiagLabel.userInteractionEnabled = NO;
     }
-    // 始终挂到当前最上层窗口并置顶，避免跨窗口/层级被盖住
     if (gTapDiagLabel.superview != win) [win addSubview:gTapDiagLabel];
     [win bringSubviewToFront:gTapDiagLabel];
 
     gTapDiagLabel.text = text;
     CGSize maxSize = CGSizeMake(win.bounds.size.width - 24, 240);
     CGSize sz = [gTapDiagLabel sizeThatFits:maxSize];
-    CGFloat x = 12, y = 64;
-    gTapDiagLabel.frame = CGRectMake(x, y, MIN(sz.width + 16, maxSize.width), sz.height + 12);
+    gTapDiagLabel.frame = CGRectMake(12, 64, MIN(sz.width + 16, maxSize.width), sz.height + 12);
     gTapDiagLabel.alpha = 1.0;
     gTapDiagLabel.hidden = NO;
 
@@ -143,22 +247,21 @@ static void DYFSShowTapDiag(NSString *text) {
 static IMP gOrigGridSelect = NULL;
 static void DYFSTapDiagGridSelect(id self, SEL cmd, UICollectionView *cv, NSIndexPath *ip) {
     if (gOrigGridSelect) ((void (*)(id, SEL, UICollectionView *, NSIndexPath *))gOrigGridSelect)(self, cmd, cv, ip);
-
     if (!gTapDiagEnabled) return;
 
-    // 本 hook 只挂在 AWEDCFeedListViewController（profile/喜欢/收藏宫格），直接收集信息。
     CGRect wr = CGRectZero;
     UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
     if (cell) wr = [cell convertRect:cell.bounds toView:nil];
-    NSString *aid = DYFSGridAwemeID(self, ip);
+    NSString *aid = DYFSGridAwemeID(self, ip, cell);
 
     gLastGridItem = [NSString stringWithFormat:@"%ld,%ld", (long)ip.section, (long)ip.item];
     gLastGridListAid = aid;
     gLastGridTime = CACurrentMediaTime();
 
+    NSString *display = aid ?: [NSString stringWithFormat:@"n/a(%@)", gLastGridSearchDebug ?: @"no_src"];
     NSString *msg = [NSString stringWithFormat:
-        @"[宫格点] item=(%@) 屏(x=%.0f,y=%.0f)\n列表aweme=%@\n（点开后看详情是否一致）",
-        gLastGridItem, CGRectGetMidX(wr), CGRectGetMidY(wr), aid ?: @"n/a"];
+        @"[宫格点] item=(%@) 屏(x=%.0f,y=%.0f)\n列表aweme=%@",
+        gLastGridItem, CGRectGetMidX(wr), CGRectGetMidY(wr), display];
     DYFSShowTapDiag(msg);
 }
 
@@ -172,7 +275,6 @@ static void DYFSTapDiagDetailAppear(id self, SEL cmd, BOOL animated) {
     NSString *aid = DYFSDetailAwemeID(self);
     if (!aid) return;
 
-    // 与「上一次宫格点」对比（4s 内视为同一次点击流程）
     NSTimeInterval dt = CACurrentMediaTime() - gLastGridTime;
     NSString *verdict = @"";
     if (gLastGridListAid && gLastGridTime > 0 && dt < 4.0) {
