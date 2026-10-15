@@ -12,4 +12,6 @@ BOOL DYFSInProfileContext(UIView *view);
 BOOL DYFSIsDetailVideoContext(UIView *view);
 BOOL DYFSIsIMDetailContext(UIView *view);
 BOOL DYFSIsLivePreStreamContext(UIView *view);
+// 普通聊天会话窗口（不是聊天里点开的分享视频详情）：一律不做透明化处理。
+BOOL DYFSIsChatConversationContext(UIView *view);
 BOOL DYFSIsFeedCellInteractionController(UIViewController *controller);

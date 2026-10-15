@@ -428,6 +428,9 @@ static void DYFSApplyInteractionTransparency(UIView *root) {
 
 static void DYFSTransparencyApplyNow(UIView *root) {
     if (!root || !DYFSIsEnabled()) return;
+    // 普通聊天会话窗口整个跳过：底部输入栏的毛玻璃会被兜底逻辑当成
+    // 「贴底深色条」隐藏掉，表现为底栏透明一块。
+    if (DYFSIsChatConversationContext(root)) return;
 
     // 「贴底」必须以窗口为参照：root 往往是整张 feed 列表，高度可达数千。
     UIWindow *window = root.window;

@@ -209,12 +209,54 @@ static void DYFSSchedulePlayerContentHeight(id playerController) {
     });
 }
 
+// 判断子树里是否有交互控件（看两层：互动层 -> 按钮）。
+// 用来在向上拉高视频画面时及时停手，避免把互动层一起拉到底栏上。
+static BOOL DYFSViewHasControlNearby(UIView *view) {
+    for (UIView *sub in view.subviews) {
+        if ([sub isKindOfClass:UIControl.class]) return YES;
+        for (UIView *inner in sub.subviews) {
+            if ([inner isKindOfClass:UIControl.class]) return YES;
+        }
+    }
+    return NO;
+}
+
+// 我-喜欢 / 我-作品 / 聊天分享的作品 / 详情页：视频画面同样撑满整屏，
+// 底部评论/输入栏由透明化覆盖在视频上。
+// 只拉「视频画面」这一条链，遇到含按钮的互动层就停 —— 互动层保持原高度，
+// 按钮与文案不会位移（0.4.15 修过的问题不能回归）。
+static void DYFSApplyDetailVideoFullscreen(UIView *contentView) {
+    if (!contentView || !DYFSIsEnabled()) return;
+    if (![contentView isKindOfClass:UIView.class]) return;
+    UIWindow *window = contentView.window;
+    if (!window) return;
+    CGFloat screenH = CGRectGetHeight(window.bounds);
+    if (screenH <= 1.0) return;
+    CGFloat tabH = DYFSBottomTabBarHeight(contentView);
+
+    UIView *view = contentView;
+    for (NSUInteger depth = 0; view && depth < 8; depth++, view = view.superview) {
+        CGFloat h = CGRectGetHeight(view.frame);
+        if (h <= 1.0) break;
+        if (fabs(h - screenH) <= 0.5) break;                         // 已经整屏
+        if (fabs(screenH - h - tabH) > MAX(2.0, tabH * 0.5)) break;  // 不是「差一个底栏」
+        if (DYFSViewHasControlNearby(view)) break;                   // 互动层不拉高
+        CGRect frame = view.frame;
+        frame.size.height = screenH;
+        view.frame = frame;
+        DYFSLayoutFixCount++;
+        DYFSLog([NSString stringWithFormat:@"detail fullscreen %@ height %.2f -> %.2f",
+                 NSStringFromClass(view.class), h, screenH]);
+    }
+}
+
 void DYFSPlayerContentLayoutA(id self, SEL cmd) {
     if (DYFSOriginalPlayerContentA) ((void (*)(id, SEL))DYFSOriginalPlayerContentA)(self, cmd);
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
     DYFSSchedulePlayerContentHeight(self);
+    DYFSApplyDetailVideoFullscreen(DYFSSafeValueForKey(self, @"contentView"));
 }
 
 void DYFSPlayerContentLayoutB(id self, SEL cmd) {
@@ -223,6 +265,7 @@ void DYFSPlayerContentLayoutB(id self, SEL cmd) {
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
     DYFSSchedulePlayerContentHeight(self);
+    DYFSApplyDetailVideoFullscreen(DYFSSafeValueForKey(self, @"contentView"));
 }
 
 void DYFSPlayerContentLayoutC(id self, SEL cmd) {
@@ -231,6 +274,7 @@ void DYFSPlayerContentLayoutC(id self, SEL cmd) {
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
     DYFSSchedulePlayerContentHeight(self);
+    DYFSApplyDetailVideoFullscreen(DYFSSafeValueForKey(self, @"contentView"));
 }
 
 void DYFSElementStackLayout(id self, SEL cmd) {
@@ -308,22 +352,26 @@ static void DYFSAdjustLivePreStreamBottomPanel(UIView *container) {
         if (![name containsString:@"IESLiveLayoutContainerView"]) continue;
         CGFloat h = CGRectGetHeight(view.bounds);
         if (h < 80.0 || h > 250.0) continue;
-        CGRect rect = [view.superview convertRect:view.frame toView:container];
-        CGFloat bottom = CGRectGetMaxY(rect);
+        // 用 center + bounds 算底边：不掺入已应用的 transform，
+        // 多次调用排名稳定，不会因为上移过就选错面板。
+        CGPoint bottomPoint = CGPointMake(view.center.x, view.center.y + h * 0.5);
+        CGFloat bottom = [view.superview convertPoint:bottomPoint toView:container].y;
         if (bottom > bestBottom) { bestBottom = bottom; panel = view; }
     }
     if (!panel) return;
 
-    CGRect frame = panel.frame;
-    CGRect rectInContainer = [panel.superview convertRect:frame toView:container];
-    CGFloat currentBottom = CGRectGetMaxY(rectInContainer);
-    CGFloat shift = currentBottom - targetBottom;
-    if (shift > 1.0) {
-        CGPoint origin = frame.origin;
-        origin.y -= shift;
-        frame.origin = origin;
-        panel.frame = frame;
-        DYFSLog([NSString stringWithFormat:@"live pre-stream bottom panel shifted up %.2f", shift]);
+    // 用 transform 而不是改 frame：Auto Layout 重排只会改写 center / bounds，
+    // 不会清掉 transform。之前改 frame 会被抖音后续布局压回底栏，表现为时好时坏。
+    CGPoint bottomPoint = CGPointMake(panel.center.x,
+                                      panel.center.y + CGRectGetHeight(panel.bounds) * 0.5);
+    CGFloat layoutBottom = [panel.superview convertPoint:bottomPoint toView:container].y;
+    CGFloat visualBottom = layoutBottom + panel.transform.ty;   // 叠上已应用的位移
+    CGFloat shift = visualBottom - targetBottom;
+    if (fabs(shift) > 1.0) {
+        panel.transform = CGAffineTransformTranslate(panel.transform, 0.0, -shift);
+        DYFSLog([NSString stringWithFormat:
+                 @"live pre-stream bottom panel shifted %.2f (bottom %.2f -> %.2f)",
+                 -shift, visualBottom, targetBottom]);
     }
 }
 
@@ -334,8 +382,13 @@ void DYFSLivePreStreamLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
     UIView *container = (UIView *)self;
     DYFSAdjustLivePreStreamBottomPanel(container);
-    // Auto Layout 可能在下一帧把 frame 压回去，延迟再调一次。
+    // 面板可能此刻还没布局完（高度还是 0），下一帧与稍后各补一次，
+    // 等它真正有尺寸后再上移。transform 会一直保留，不会互相打架。
     dispatch_async(dispatch_get_main_queue(), ^{
+        DYFSAdjustLivePreStreamBottomPanel(container);
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
         DYFSAdjustLivePreStreamBottomPanel(container);
     });
 }

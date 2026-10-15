@@ -46,6 +46,27 @@ BOOL DYFSIsIMDetailContext(UIView *view) {
     return NO;
 }
 
+// 普通聊天会话窗口：消息列表 + 底部输入栏（IESIMInputViewController）。
+// 这类页面底部本来就有毛玻璃底栏，兜底的「贴底深色条隐藏」会把它误判成黑条
+// 隐藏掉，出现底栏透明一块。因此整个聊天会话都不做处理。
+// 注意：聊天里点开的「分享视频详情」(AWEAwemeIMDetailTableViewController)
+// 不属于这里，仍要正常做底栏透明。
+BOOL DYFSIsChatConversationContext(UIView *view) {
+    if (DYFSIsIMDetailContext(view)) return NO;
+    UIViewController *controller = DYFSFindViewController(view);
+    for (NSUInteger depth = 0; controller && depth < 20; depth++, controller = controller.parentViewController) {
+        NSString *name = NSStringFromClass(controller.class);
+        if ([name containsString:@"AWEIMMessageBaseViewController"] ||
+            [name containsString:@"AWEIMConversationViewController"] ||
+            [name containsString:@"AWEIMMessageListViewController"] ||
+            [name containsString:@"AWEIMChatListViewController"] ||
+            [name containsString:@"IESIMInputViewController"]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 BOOL DYFSIsLivePreStreamContext(UIView *view) {
     UIResponder *item = view;
     for (NSUInteger depth = 0; item && depth < 20; depth++) {
