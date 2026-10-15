@@ -209,53 +209,50 @@ static void DYFSSchedulePlayerContentHeight(id playerController) {
     });
 }
 
-// 详情页（我-喜欢/我-作品/收藏/推荐/聊天分享）：视频撑满整屏。
-// 承载视频的 AWEAwemeDetailTableView 只有 843 高且 clipsToBounds=YES，会裁掉拉满的
-// 视频，底部 83pt 露出背后纯黑板 —— 这才是「底栏不透明」的根源。故把整宽且「正好
-// 差一个底栏高度」的容器链（cell / 表格 / 播放器）拉到整屏，并清掉纯黑底。
-static void DYFSApplyDetailFullscreen(UIView *root) {
+// 纯黑不透明底板 -> 清成透明。只改颜色，绝不动 frame。
+static void DYFSClearIfOpaqueBlack(UIView *view) {
+    if (!view) return;
+    UIColor *bg = view.backgroundColor;
+    if (!bg) return;
+    CGFloat r = 0, g = 0, b = 0, a = 0, white = 0;
+    BOOL ok = [bg getRed:&r green:&g blue:&b alpha:&a];
+    if (!ok && [bg getWhite:&white alpha:&a]) { r = g = b = white; ok = YES; }
+    if (!ok || a < 0.9) return;
+    if ((0.299 * r + 0.587 * g + 0.114 * b) >= 0.1) return;
+    DYFSBackupAppearance(view);
+    view.backgroundColor = UIColor.clearColor;
+    view.layer.backgroundColor = UIColor.clearColor.CGColor;
+    view.opaque = NO;
+}
+
+// 详情页（我-喜欢/我-作品/收藏/推荐/聊天分享）：清掉铺在视频后面的纯黑底板，
+// 让底部那一条不再是黑板。
+//
+// ⚠️ 原则：透明化只动背景，绝不调整 / 移动布局。
+// 0.5.6 曾在这里把容器链（cell / 表格 / 播放器）拉到整屏，结果互动层被一起拉高到
+// 1009，账号 / 文案 / 进度条 / 右侧喜欢评论按钮全部被推到底栏下方 —— 0.5.9 已移除，
+// 这里只剩清背景。
+static void DYFSClearDetailBlackPlates(UIView *root) {
     if (!root || !DYFSIsEnabled()) return;
     UIWindow *window = root.window;
     if (!window) return;
-    CGFloat screenH = CGRectGetHeight(window.bounds);
     CGFloat screenW = CGRectGetWidth(window.bounds);
-    if (screenH <= 1.0 || screenW <= 1.0) return;
-    CGFloat tabH = DYFSBottomTabBarHeight(root);
-    CGFloat tol = MAX(2.0, tabH * 0.5);
+    if (screenW <= 1.0) return;
 
-    // 向上：cell / 表格等祖先拉到整屏，并清掉纯黑不透明底
-    for (UIView *cursor = root; cursor; cursor = cursor.superview) {
-        if (CGRectGetWidth(cursor.bounds) < screenW * 0.9) continue;
-        if (fabs(screenH - CGRectGetHeight(cursor.bounds) - tabH) > tol) continue;
-        UIColor *bg = cursor.backgroundColor;
-        CGFloat r = 0, g = 0, b = 0, a = 0, white = 0;
-        BOOL ok = [bg getRed:&r green:&g blue:&b alpha:&a];
-        if (!ok && [bg getWhite:&white alpha:&a]) { r = g = b = white; ok = YES; }
-        if (ok && a > 0.9 && (0.299 * r + 0.587 * g + 0.114 * b) < 0.1) {
-            DYFSBackupAppearance(cursor);
-            cursor.backgroundColor = UIColor.clearColor;
-            cursor.layer.backgroundColor = UIColor.clearColor.CGColor;
-            cursor.opaque = NO;
-        }
-        CGRect frame = cursor.frame;
-        frame.size.height = screenH;
-        cursor.frame = frame;
-        DYFSLayoutFixCount++;
-    }
-
-    // 向下：播放器一侧同样补齐
+    // 向下：铺在视频后面的整宽黑板（例如 AWEAwemeDetailTableView）
     NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
-    for (NSUInteger visited = 0; pending.count > 0 && visited < 200; visited++) {
+    for (NSUInteger visited = 0; pending.count > 0 && visited < 120; visited++) {
         UIView *view = pending.lastObject;
         [pending removeLastObject];
         [pending addObjectsFromArray:view.subviews];
         if (view.hidden || view.alpha <= 0.01) continue;
         if (CGRectGetWidth(view.bounds) < screenW * 0.9) continue;
-        if (fabs(screenH - CGRectGetHeight(view.bounds) - tabH) > tol) continue;
-        CGRect frame = view.frame;
-        frame.size.height = screenH;
-        view.frame = frame;
-        DYFSLayoutFixCount++;
+        DYFSClearIfOpaqueBlack(view);
+    }
+    // 向上：背后的整屏黑板可能在祖先里
+    for (UIView *cursor = root.superview; cursor; cursor = cursor.superview) {
+        if (CGRectGetWidth(cursor.bounds) < screenW * 0.9) continue;
+        DYFSClearIfOpaqueBlack(cursor);
     }
 }
 
@@ -265,7 +262,7 @@ void DYFSPlayerContentLayoutA(id self, SEL cmd) {
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
     DYFSSchedulePlayerContentHeight(self);
-    DYFSApplyDetailFullscreen(root);
+    DYFSClearDetailBlackPlates(root);
 }
 
 void DYFSPlayerContentLayoutB(id self, SEL cmd) {
@@ -274,7 +271,7 @@ void DYFSPlayerContentLayoutB(id self, SEL cmd) {
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
     DYFSSchedulePlayerContentHeight(self);
-    DYFSApplyDetailFullscreen(root);
+    DYFSClearDetailBlackPlates(root);
 }
 
 void DYFSPlayerContentLayoutC(id self, SEL cmd) {
@@ -283,7 +280,7 @@ void DYFSPlayerContentLayoutC(id self, SEL cmd) {
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
     DYFSSchedulePlayerContentHeight(self);
-    DYFSApplyDetailFullscreen(root);
+    DYFSClearDetailBlackPlates(root);
 }
 
 void DYFSElementStackLayout(id self, SEL cmd) {
