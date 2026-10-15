@@ -100,20 +100,23 @@ static void DYFSHideDarkBottomChrome(UIView *root, UIView *reference) {
         [pending removeLastObject];
         [pending addObjectsFromArray:view.subviews];
         if (view.hidden || view.alpha <= 0.01) continue;
-        // 有文字、有控件、含视频文案/描述的容器一律保留，只清背景
-        if (DYFSSubtreeHasText(view, 0) || DYFSSubtreeHasControl(view, 0) ||
-            DYFSSubtreeHasCaptionDescription(view, 0)) continue;
 
+        // ⚠️ 先做便宜的几何 / 类型过滤，再跑昂贵的子树扫描（NSStringFromClass +
+        // containsString）。反过来的话，BFS 扫到的每个视图都要整棵子树字符串匹配，
+        // 是 O(n²) 开销，实测会把主线程跑满触发看门狗（0x8BADF00D）。
         CGRect rect = [view convertRect:view.bounds toView:reference];
         if (CGRectGetMinY(rect) < limitY) continue;
         CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
         if (w < refW * 0.5 || h < 20.0 || h > refH * 0.3) continue;
+        if (!(DYFSIsNamedChrome(view) || DYFSIsDarkBackgroundView(view) ||
+              [view isKindOfClass:UIVisualEffectView.class])) continue;
 
-        if (DYFSIsNamedChrome(view) || DYFSIsDarkBackgroundView(view) ||
-            [view isKindOfClass:UIVisualEffectView.class]) {
-            DYFSBackupAppearance(view);
-            view.hidden = YES;
-        }
+        // 有文字、有控件、含视频文案/描述的容器一律保留，只清背景
+        if (DYFSSubtreeHasText(view, 0) || DYFSSubtreeHasControl(view, 0) ||
+            DYFSSubtreeHasCaptionDescription(view, 0)) continue;
+
+        DYFSBackupAppearance(view);
+        view.hidden = YES;
     }
 }
 
@@ -160,9 +163,9 @@ static void DYFSClearBottomBarChrome(UIView *reference) {
         [pending removeLastObject];
         [pending addObjectsFromArray:view.subviews];
         if (view == reference || view.hidden || view.alpha <= 0.01) continue;
-        // 保护视频文案/描述容器，不能被当成贴底黑条处理。
-        if (DYFSIsCaptionDescriptionView(view) || DYFSSubtreeHasCaptionDescription(view, 0)) continue;
 
+        // ⚠️ 同样是几何优先：这里 BFS 走的是整棵 window 树（600 个视图），
+        // 先把不可能是底栏的剔掉，再跑子树扫描，避免 O(n²) 字符串开销。
         CGRect rect = [view convertRect:view.bounds toView:reference];
         CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
         if (w < refW * 0.9 || h < 20.0 || h > 170.0) continue;
@@ -172,6 +175,8 @@ static void DYFSClearBottomBarChrome(UIView *reference) {
 
         // 聊天输入栏与 IM 详情同处一个 window，按视图自身上下文排除（否则返回聊天底栏已透明）
         if (DYFSIsChatConversationContext(view)) continue;
+        // 保护视频文案/描述容器，不能被当成贴底黑条处理。
+        if (DYFSIsCaptionDescriptionView(view) || DYFSSubtreeHasCaptionDescription(view, 0)) continue;
 
         if (DYFSSubtreeHasText(view, 0) || DYFSSubtreeHasControl(view, 0)) {
             DYFSClearOwnBackground(view);

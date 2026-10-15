@@ -19,10 +19,15 @@
 #import "DYFSContext.h"
 #import "DYFSCardTransparency.h"
 #import "DYFSBottomChrome.h"
+#import <QuartzCore/QuartzCore.h>
 
 // 单轮最多处理多少个 root。正常一帧内只会有 1~3 个触发点，
 // 这个上限只在「改布局 → 触发布局 → 再入队」的反馈环里才会被触及。
 static const NSUInteger kDYFSMaxRootsPerPass = 8;
+
+// 两轮之间的最小间隔。一次完整遍历要扫整棵视图树，布局回调又极其密集，
+// 不限流的话主线程会被连续几轮遍历跑满（实测 0x8BADF00D，42% CPU / 13s）。
+static const CFTimeInterval kDYFSMinPassInterval = 0.1;
 
 static void DYFSTransparencyApplyNow(UIView *root) {
     if (!root || !DYFSIsEnabled()) return;
@@ -68,6 +73,13 @@ void DYFSTransparencyApplyInView(UIView *root) {
     // 正在处理时直接返回：本次请求已入队，由当前这轮一起处理，
     // 同时天然阻断递归重入。
     if (running) return;
+
+    // 限流：距上一轮太近就等下一次回调。这些触发点每帧都会来，
+    // 晚 100ms 处理不影响观感，但能挡住「连续几轮全树遍历」把主线程跑满。
+    static CFTimeInterval lastPassTime = 0.0;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (lastPassTime > 0.0 && now - lastPassTime < kDYFSMinPassInterval) return;
+    lastPassTime = now;
 
     running = YES;
     NSUInteger processed = 0;

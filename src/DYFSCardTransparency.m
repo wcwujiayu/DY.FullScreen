@@ -34,15 +34,17 @@ static void DYFSHideOverlappingChrome(UIView *anchor, UIView *root) {
         UIView *parent = cursor.superview;
         if (!parent) break;
         for (UIView *sibling in [parent.subviews copy]) {
-            if (sibling == cursor || sibling.hidden || DYFSSubtreeHasControl(sibling, 0)) continue;
-            if (!DYFSIsPlainBacking(sibling)) continue;
-            if (DYFSSubtreeHasText(sibling, 0)) continue;
+            if (sibling == cursor || sibling.hidden) continue;
+            // 几何 / 类型先过滤，最后才做昂贵的子树扫描（同底部清理，避免 O(n²)）。
             CGRect rect = [sibling convertRect:sibling.bounds toView:root];
             CGFloat sh = CGRectGetHeight(rect);
             if (sh < ah * 0.5 || sh > MAX(ah * 2.5, ah + 60.0)) continue;
+            if (!DYFSIsPlainBacking(sibling)) continue;
             CGRect inter = CGRectIntersection(rect, anchorRect);
             CGFloat ratio = CGRectGetWidth(inter) * CGRectGetHeight(inter) / MAX(1.0, aw * ah);
             if (ratio < 0.6) continue;
+            if (DYFSSubtreeHasControl(sibling, 0)) continue;
+            if (DYFSSubtreeHasText(sibling, 0)) continue;
             sibling.hidden = YES;
         }
     }
