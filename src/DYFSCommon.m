@@ -455,3 +455,23 @@ void DYFSClearOwnBackground(UIView *view) {
         }
     }
 }
+
+#pragma mark - 底栏高度实测
+
+CGFloat DYFSBottomTabBarHeight(UIView *view) {
+    UIWindow *window = view.window;
+    if (!window) window = UIApplication.sharedApplication.windows.firstObject;
+    if (window) {
+        UIView *tabBar = DYFSFindSubviewOfClass(window, @"AWENormalModeTabBar", 0);
+        CGFloat measured = CGRectGetHeight(tabBar.bounds);
+        if (tabBar && isfinite(measured) && measured >= 30.0 && measured < CGRectGetHeight(window.bounds)) {
+            return measured;
+        }
+        return 49.0 + MAX(0.0, window.safeAreaInsets.bottom);
+    }
+    // 极端兜底：App 连 window 都拿不到。此时调用方也会因为 winH<=0 提前返回，
+    // 这个分支实际不可达，不参与任何判断逻辑。数值取「49 + 34」（全面屏底部安全区），
+    // 只为跟上面的正常返回值保持同量级，不是设备相关的判断条件。
+    return 83.0;
+}
+
