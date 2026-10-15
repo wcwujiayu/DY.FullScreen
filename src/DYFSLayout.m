@@ -22,6 +22,7 @@ static IMP DYFSOriginalPlayerContentC = NULL;
 static IMP DYFSOriginalElementStackLayout = NULL;
 static IMP DYFSOriginalDetailTableLayout = NULL;
 static IMP DYFSOriginalDetailCellLayout = NULL;
+static IMP DYFSOriginalDetailRowHeight = NULL;
 static IMP DYFSOriginalMixPanelDetailLayout = NULL;
 static IMP DYFSOriginalLivePreStreamLayout = NULL;
 
@@ -31,20 +32,6 @@ static const NSTimeInterval kDYFSPlayerSettleDelay = 0.05;
 static char kDYFSPlayerLayoutPendingKey;
 static char kDYFSPlayerParentHeightKey;
 static char kDYFSPlayerSettledGeometryKey;
-CGFloat DYFSBottomTabBarHeight(UIView *view) {
-    UIWindow *window = view.window;
-    if (!window) window = UIApplication.sharedApplication.windows.firstObject;
-    if (window) {
-        UIView *tabBar = DYFSFindSubviewOfClass(window, @"AWENormalModeTabBar", 0);
-        CGFloat measured = CGRectGetHeight(tabBar.bounds);
-        if (tabBar && isfinite(measured) && measured >= 30.0 && measured < CGRectGetHeight(window.bounds)) {
-            return measured;
-        }
-        return 49.0 + MAX(0.0, window.safeAreaInsets.bottom);
-    }
-    // 兜底必须跟上面一致（49+安全区34=83）。返回 49 会让互动层算成 877，UI 会掉一截。
-    return 83.0;
-}
 
 void DYFSDetailTableLayout(id self, SEL cmd) {
     if (DYFSOriginalDetailTableLayout) {
@@ -53,7 +40,7 @@ void DYFSDetailTableLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
     DYFSTransparencyApplyInView(root);
-    // 表格也必须拉满：只拉 cell 会出现 cell(926)/表格(843) 不一致 -> 分页错位（滑动卡半截）+ 视频被裁
+    // 表格也拉满：否则可视区仍是 843，视频被裁
     UIView *table = DYFSFindSubviewOfClass(root, @"AWEAwemeDetailTableView", 0);
     CGFloat winH = root.window ? CGRectGetHeight(root.window.bounds) : 0.0;
     CGFloat tabH = DYFSBottomTabBarHeight(root);
@@ -99,7 +86,7 @@ void DYFSInteractionControllerLayout(id self, SEL cmd) {
     CGFloat targetHeight = parentHeight - tabBarHeight;
 
     if (!DYFSIsFeedCellInteractionController(controller)) {
-        // 父容器必须先被拉到整屏才处理（父高 843 时算出 760 会把 UI 顶上去）；图文容器可能超整屏，故取 min。
+        // 父容器必须先到整屏才处理（父高 843 时算出 760 会把 UI 顶上去）；图文容器可能超整屏，故取 min
         UIWindow *window = view.window;
         CGFloat winH = window ? CGRectGetHeight(window.bounds) : 0.0;
         BOOL inDetail = DYFSInProfileContext(view) || DYFSIsDetailVideoContext(view) ||
@@ -226,34 +213,16 @@ static void DYFSSchedulePlayerContentHeight(id playerController) {
     });
 }
 
-// 详情页（我-喜欢 / 我-作品 / 收藏 / 推荐 / 聊天分享）：
-//  1) 承载视频的容器（AWEAwemeDetailTableView / cell）只有 843 高且 clipsToBounds=YES，
-//     不拉满就会把视频裁在 843，底部 83pt 露出黑板（底栏不透明）→ 拉到整屏。
-//  2) 清掉铺在视频后面的纯黑底板。
-// ⚠️ 只拉「承载视频」的容器；互动层由 DYFSInteractionControllerLayout 锁回
-//    「整屏 - 底栏」，账号 / 文案 / 进度条 / 右侧按钮才不会被推到底栏下方。
+// 详情页：清掉铺在视频后面的纯黑底板。这里不动任何高度 ——
+// cell 高度交给行高 hook，表格可视高交给 DYFSDetailTableLayout，
+// 互动层交给 DYFSInteractionControllerLayout，各司其职避免多层叠加（926->1009->1092）。
 static void DYFSDetailFullscreenPass(UIView *root) {
     if (!root || !DYFSIsEnabled()) return;
     UIWindow *window = root.window;
     if (!window) return;
-    CGFloat screenH = CGRectGetHeight(window.bounds);
     CGFloat screenW = CGRectGetWidth(window.bounds);
-    if (screenH <= 1.0 || screenW <= 1.0) return;
-    CGFloat tabH = DYFSBottomTabBarHeight(root);
-    CGFloat tol = MAX(2.0, tabH * 0.5);
+    if (screenW <= 1.0) return;
 
-    // 向上：只动「整宽且正好差一个底栏高度」的容器，设为固定整屏高（幂等，不累加）
-    for (UIView *cursor = root; cursor; cursor = cursor.superview) {
-        if (CGRectGetWidth(cursor.bounds) < screenW * 0.9) continue;
-        if (fabs(screenH - CGRectGetHeight(cursor.bounds) - tabH) > tol) continue;
-        DYFSClearOpaqueBlackBackground(cursor);
-        CGRect frame = cursor.frame;
-        frame.size.height = screenH;
-        cursor.frame = frame;
-        DYFSLayoutFixCount++;
-    }
-
-    // 向下：只清纯黑底板，不动高度（播放器自身往往已超过整屏）
     NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
     for (NSUInteger visited = 0; pending.count > 0 && visited < 120; visited++) {
         UIView *view = pending.lastObject;
@@ -263,6 +232,30 @@ static void DYFSDetailFullscreenPass(UIView *root) {
         if (CGRectGetWidth(view.bounds) < screenW * 0.9) continue;
         DYFSClearOpaqueBlackBackground(view);
     }
+    for (UIView *cursor = root.superview; cursor; cursor = cursor.superview) {
+        if (CGRectGetWidth(cursor.bounds) < screenW * 0.9) continue;
+        DYFSClearOpaqueBlackBackground(cursor);
+    }
+}
+
+// 行高对齐首页（两套机制的根本差异）：首页该 delegate 返回整屏 926；详情页返回 843，
+// 于是 cell 高 926 却按 843 排布 -> 滚一页停在 cell 中间（卡半截）。
+static CGFloat DYFSDetailRowHeight(id self, SEL cmd, UITableView *tableView, NSIndexPath *indexPath) {
+    CGFloat original = 0.0;
+    if (DYFSOriginalDetailRowHeight) {
+        original = ((CGFloat (*)(id, SEL, UITableView *, NSIndexPath *))DYFSOriginalDetailRowHeight)
+                   (self, cmd, tableView, indexPath);
+    }
+    if (!DYFSIsEnabled() || original <= 0.0) return original;
+    UIViewController *vc = [self isKindOfClass:UIViewController.class] ? (UIViewController *)self : nil;
+    UIView *view = vc.view;
+    UIWindow *window = view.window;
+    if (!window) window = UIApplication.sharedApplication.windows.firstObject;
+    CGFloat winH = window ? CGRectGetHeight(window.bounds) : 0.0;
+    if (winH <= 0.0) return original;
+    CGFloat tabH = DYFSBottomTabBarHeight(view);
+    if (fabs(winH - original - tabH) > MAX(2.0, tabH * 0.5)) return original;
+    return winH;
 }
 
 void DYFSPlayerContentLayoutA(id self, SEL cmd) {
@@ -483,6 +476,13 @@ void DYFSLayoutInstallHooks(void) {
     if (cls && !DYFSInstalledDetailCell) {
         DYFSInstalledDetailCell = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
                     (IMP)DYFSDetailCellLayout, &DYFSOriginalDetailCellLayout);
+    }
+    // 行高对齐首页：详情页行高原本是「整屏-底栏」，改成整屏（见 DYFSDetailRowHeight）
+    static BOOL detailRowHeightInstalled = NO;
+    cls = NSClassFromString(kDYFSClassDetailTable);
+    if (cls && !detailRowHeightInstalled) {
+        detailRowHeightInstalled = DYFSInstallHook(cls, @selector(tableView:heightForRowAtIndexPath:),
+                    (IMP)DYFSDetailRowHeight, &DYFSOriginalDetailRowHeight);
     }
     cls = NSClassFromString(kDYFSClassMixPanel);
     if (cls && !DYFSInstalledMixPanelDetail) {
