@@ -222,11 +222,16 @@ static void DYFSClearDarkChromeTree(UIView *view, NSUInteger depth) {
         if (sub.hidden || sub.alpha <= 0.01) continue;
         // 视频文案/描述容器：只保留，不进入背景清理。
         if (DYFSIsCaptionDescriptionView(sub) || DYFSSubtreeHasCaptionDescription(sub, 0)) continue;
+        // 含文字/控件的容器也要清掉自身的渐变/图片子层（例如评论输入胶囊、
+        // 聊天分享底栏胶囊的深色底），否则只递归子视图会漏掉容器自己画的那一层黑底。
+        // 控件与图标图不在此列，避免误清按钮/表情图等可见内容。
+        if (![sub isKindOfClass:UIControl.class] && ![sub isKindOfClass:UIImageView.class]) {
+            DYFSClearOwnBackground(sub);
+        }
         BOOL isPlain = !DYFSSubtreeHasText(sub, 0) && !DYFSSubtreeHasControl(sub, 0);
         BOOL isEffect = [sub isKindOfClass:UIVisualEffectView.class];
         if (isPlain && (DYFSIsDarkBackgroundView(sub) || DYFSIsNamedChrome(sub) || isEffect)) {
-            DYFSClearOwnBackground(sub);
-            if (isEffect || DYFSIsNamedChrome(sub)) sub.hidden = YES;
+            if (isEffect || DYFSIsNamedChrome(sub)) { DYFSBackupAppearance(sub); sub.hidden = YES; }
             DYFSBottomChromeHideCount++;
             continue;
         }
@@ -259,7 +264,8 @@ static void DYFSClearBottomBarChrome(UIView *reference) {
         CGFloat w = CGRectGetWidth(rect), h = CGRectGetHeight(rect);
         if (w < refW * 0.9 || h < 20.0 || h > 170.0) continue;
         if (CGRectGetMinY(rect) < refH - 220.0) continue;   // 只看底部区域
-        if (CGRectGetMaxY(rect) < refH - 12.0) continue;    // 必须贴底
+        // 接近底部即可：聊天分享 / 作品页的底栏胶囊不一定完全贴底（下方还有输入条）。
+        if (CGRectGetMaxY(rect) < refH - 130.0) continue;
 
         if (DYFSSubtreeHasText(view, 0) || DYFSSubtreeHasControl(view, 0)) {
             DYFSClearOwnBackground(view);
@@ -441,7 +447,7 @@ static void DYFSTransparencyApplyNow(UIView *root) {
     // 个人主页 / 详情页自己的贴底黑条（与首页底栏不是同一个类）。
     // 只在个人主页与详情页跑：首页信息流里同样贴底的容器（文章类视频的
     // 「阅读文章」条等）不该被动到。
-    if (DYFSInProfileContext(root) || DYFSIsDetailVideoContext(root)) {
+    if (DYFSInProfileContext(root) || DYFSIsDetailVideoContext(root) || DYFSIsIMDetailContext(root)) {
         DYFSClearBottomBarChrome(reference);
     }
     // 兜底：单独存在的深色背景条（不成组的 pill 也能覆盖到）

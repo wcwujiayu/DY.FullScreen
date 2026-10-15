@@ -23,6 +23,7 @@ static IMP DYFSOriginalElementStackLayout = NULL;
 static IMP DYFSOriginalDetailTableLayout = NULL;
 static IMP DYFSOriginalDetailCellLayout = NULL;
 static IMP DYFSOriginalMixPanelDetailLayout = NULL;
+static IMP DYFSOriginalLivePreStreamLayout = NULL;
 
 // 等父容器尺寸稳定后再匹配高度，避免与原生布局互相触发。
 // 0.05s：原来的 0.18s 会让"关掉评论区后画面先黑底、再拉伸"的过程肉眼可见。
@@ -286,6 +287,59 @@ void DYFSStoryContainerLayout(id self, SEL cmd) {
     }
 }
 
+// 直播预览卡片（AWELivePreStream4LayerContainerView）底部信息面板当前会延伸到
+// 屏幕最底部，与 tab 底栏重叠，导致左下角文案被遮挡。这里把它整体上移，
+// 使面板底部停在 tab 栏上方。
+static void DYFSAdjustLivePreStreamBottomPanel(UIView *container) {
+    if (!container || !DYFSIsLivePreStreamContext(container)) return;
+    CGFloat containerH = CGRectGetHeight(container.bounds);
+    if (containerH < 200.0) return;
+    CGFloat tabH = DYFSBottomTabBarHeight(container);
+    CGFloat targetBottom = containerH - tabH;
+
+    UIView *panel = nil;
+    CGFloat bestBottom = -CGFLOAT_MAX;
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:container];
+    while (pending.count > 0) {
+        UIView *view = pending.lastObject;
+        [pending removeLastObject];
+        [pending addObjectsFromArray:view.subviews];
+        NSString *name = NSStringFromClass(view.class);
+        if (![name containsString:@"IESLiveLayoutContainerView"]) continue;
+        CGFloat h = CGRectGetHeight(view.bounds);
+        if (h < 80.0 || h > 250.0) continue;
+        CGRect rect = [view.superview convertRect:view.frame toView:container];
+        CGFloat bottom = CGRectGetMaxY(rect);
+        if (bottom > bestBottom) { bestBottom = bottom; panel = view; }
+    }
+    if (!panel) return;
+
+    CGRect frame = panel.frame;
+    CGRect rectInContainer = [panel.superview convertRect:frame toView:container];
+    CGFloat currentBottom = CGRectGetMaxY(rectInContainer);
+    CGFloat shift = currentBottom - targetBottom;
+    if (shift > 1.0) {
+        CGPoint origin = frame.origin;
+        origin.y -= shift;
+        frame.origin = origin;
+        panel.frame = frame;
+        DYFSLog([NSString stringWithFormat:@"live pre-stream bottom panel shifted up %.2f", shift]);
+    }
+}
+
+void DYFSLivePreStreamLayout(id self, SEL cmd) {
+    if (DYFSOriginalLivePreStreamLayout) {
+        ((void (*)(id, SEL))DYFSOriginalLivePreStreamLayout)(self, cmd);
+    }
+    if (!DYFSIsEnabled()) return;
+    UIView *container = (UIView *)self;
+    DYFSAdjustLivePreStreamBottomPanel(container);
+    // Auto Layout 可能在下一帧把 frame 压回去，延迟再调一次。
+    dispatch_async(dispatch_get_main_queue(), ^{
+        DYFSAdjustLivePreStreamBottomPanel(container);
+    });
+}
+
 void DYFSFeedTableLayout(id self, SEL cmd) {
     if (DYFSOriginalFeedLayout) ((void (*)(id, SEL))DYFSOriginalFeedLayout)(self, cmd);
     if (!DYFSIsEnabled()) return;
@@ -371,5 +425,13 @@ void DYFSLayoutInstallHooks(void) {
     if (cls && !DYFSInstalledMixPanelDetail) {
         DYFSInstalledMixPanelDetail = DYFSInstallHook(cls, @selector(viewDidLayoutSubviews),
                     (IMP)DYFSMixPanelDetailLayout, &DYFSOriginalMixPanelDetailLayout);
+    }
+
+    // 直播预览卡片：底部信息面板不能压到 tab 底栏上。
+    static BOOL livePreStreamHookInstalled = NO;
+    cls = NSClassFromString(@"AWELivePreStream4LayerContainerView");
+    if (cls && !livePreStreamHookInstalled) {
+        livePreStreamHookInstalled = DYFSInstallHook(cls, @selector(layoutSubviews),
+                    (IMP)DYFSLivePreStreamLayout, &DYFSOriginalLivePreStreamLayout);
     }
 }
