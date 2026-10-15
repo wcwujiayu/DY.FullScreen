@@ -70,8 +70,8 @@ if grep -rq "胖胖专属" src/ README.md; then
 else
   ok "无残留占位文案"
 fi
-if grep -q "视频全屏启动" src/DYFSCommon.m; then
-  ok "设置项标题: 视频全屏启动"
+if grep -q "DY.FullScreen" src/DYFSCommon.m; then
+  ok "设置项标题: DY.FullScreen"
 else
   bad "未找到设置项标题常量"
 fi

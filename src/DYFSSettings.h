@@ -2,7 +2,7 @@
 //  DYFSSettings.h
 //  DY.FullScreen
 //
-//  设置入口：侧边栏按钮、插件自身的诊断面板、注入抖音原生设置的开关。
+//  设置入口：抖音原生「设置」页的 DY.FullScreen 入口行，以及二级页与诊断详情。
 //
 
 #import <UIKit/UIKit.h>

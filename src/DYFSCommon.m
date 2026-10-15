@@ -37,7 +37,7 @@ const NSTimeInterval kDYFSInstallRetryInterval = 1.0;
 NSString * const DYFSBundleID = @"com.ss.iphone.ugc.Aweme";
 NSString * const DYFSTestedVersion = @"40.7.0";
 NSString * const DYFSEnabledKey = @"com.dy.fullscreen.enabled";
-NSString * const DYFSSettingsTitle = @"视频全屏启动";
+NSString * const DYFSSettingsTitle = @"DY.FullScreen";
 
 BOOL DYFSInstalledFeed = NO;
 BOOL DYFSInstalledStory = NO;
