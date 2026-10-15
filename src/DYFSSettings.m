@@ -10,10 +10,13 @@
 #import "DYFSSettings.h"
 #import "DYFSCommon.h"
 #import "DYFSContext.h"
+#import "DYFSTapDiagnostic.h"
 #import <objc/message.h>
 
 static IMP DYFSOriginalNativeSettingsDidAppear = NULL;
 static IMP DYFSOriginalNativeSettingsDidLoad = NULL;
+
+static NSString * const kDYFSTapDiagKey = @"DYFSTapDiagnosticEnabled";
 
 // 下面的 UI 类与函数定义在文件后半部分，先声明。
 static NSString *DYFSStatusText(void);
@@ -26,6 +29,7 @@ static NSString * const kDYFSEntryIdentifier = @"com.dy.fullscreen.entry";
 
 @interface DYFSSettingsViewController : UIViewController
 @property(nonatomic, strong) UISwitch *enabledSwitch;
+@property(nonatomic, strong) UISwitch *tapDiagSwitch;
 @end
 
 @implementation DYFSSettingsViewController
@@ -59,6 +63,29 @@ static NSString * const kDYFSEntryIdentifier = @"com.dy.fullscreen.entry";
     switchRow.alignment = UIStackViewAlignmentCenter;
     switchRow.distribution = UIStackViewDistributionEqualSpacing;
 
+    // 点击诊断开关：定位「我-喜欢 / 收藏」宫格「点 N 打开 N+1」。
+    UILabel *tapDiagTitle = [[UILabel alloc] init];
+    tapDiagTitle.text = @"点击诊断（定位宫格错位）";
+    tapDiagTitle.font = [UIFont systemFontOfSize:16];
+    tapDiagTitle.textColor = UIColor.labelColor;
+    tapDiagTitle.numberOfLines = 0;
+
+    self.tapDiagSwitch = [[UISwitch alloc] init];
+    self.tapDiagSwitch.on = [[NSUserDefaults standardUserDefaults] boolForKey:kDYFSTapDiagKey];
+    DYFSTapDiagnosticSetEnabled(self.tapDiagSwitch.on);
+    [self.tapDiagSwitch addTarget:self action:@selector(tapDiagChanged:) forControlEvents:UIControlEventValueChanged];
+
+    UIStackView *tapDiagRow = [[UIStackView alloc] initWithArrangedSubviews:@[tapDiagTitle, self.tapDiagSwitch]];
+    tapDiagRow.axis = UILayoutConstraintAxisHorizontal;
+    tapDiagRow.alignment = UIStackViewAlignmentCenter;
+    tapDiagRow.distribution = UIStackViewDistributionEqualSpacing;
+
+    UILabel *tapDiagHint = [[UILabel alloc] init];
+    tapDiagHint.text = @"开启后，在「我-喜欢 / 收藏」宫格点任意视频，屏幕顶部会显示点的 item 序号与详情实际加载的作品，用来判断错位发生在点击还是加载。";
+    tapDiagHint.font = [UIFont systemFontOfSize:12];
+    tapDiagHint.textColor = UIColor.tertiaryLabelColor;
+    tapDiagHint.numberOfLines = 0;
+
     UIButton *diagnosticsButton = [UIButton buttonWithType:UIButtonTypeSystem];
     [diagnosticsButton setTitle:@"运行诊断" forState:UIControlStateNormal];
     diagnosticsButton.titleLabel.font = [UIFont boldSystemFontOfSize:16];
@@ -70,7 +97,7 @@ static NSString * const kDYFSEntryIdentifier = @"com.dy.fullscreen.entry";
     [closeButton addTarget:self action:@selector(closeSettings) forControlEvents:UIControlEventTouchUpInside];
 
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        titleLabel, descriptionLabel, switchRow, diagnosticsButton, closeButton
+        titleLabel, descriptionLabel, switchRow, tapDiagRow, tapDiagHint, diagnosticsButton, closeButton
     ]];
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 18;
@@ -85,7 +112,7 @@ static NSString * const kDYFSEntryIdentifier = @"com.dy.fullscreen.entry";
         [stack.topAnchor constraintEqualToAnchor:safe.topAnchor constant:24],
         [stack.bottomAnchor constraintLessThanOrEqualToAnchor:safe.bottomAnchor constant:-20]
     ]];
-    self.preferredContentSize = CGSizeMake(360, 430);
+    self.preferredContentSize = CGSizeMake(360, 520);
 }
 
 - (void)enabledChanged:(UISwitch *)sender {
@@ -93,6 +120,13 @@ static NSString * const kDYFSEntryIdentifier = @"com.dy.fullscreen.entry";
     [[NSUserDefaults standardUserDefaults] synchronize];
     DYFSLog(sender.isOn ? @"homepage full-screen enabled" : @"homepage full-screen disabled");
     DYFSRequestRelayout();
+}
+
+- (void)tapDiagChanged:(UISwitch *)sender {
+    [[NSUserDefaults standardUserDefaults] setBool:sender.isOn forKey:kDYFSTapDiagKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    DYFSTapDiagnosticSetEnabled(sender.isOn);
+    DYFSLog(sender.isOn ? @"tap diagnostic enabled" : @"tap diagnostic disabled");
 }
 
 - (void)openDiagnosticsTapped {

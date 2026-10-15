@@ -15,6 +15,7 @@
 #import "DYFSLayout.h"
 #import "DYFSChrome.h"
 #import "DYFSSettings.h"
+#import "DYFSTapDiagnostic.h"
 
 // 启动后两次重排：第一次消化初始布局，第二次修正延迟加载的视图
 static const NSTimeInterval kDYFSStartupRelayoutDelayA = 0.20;
@@ -27,6 +28,7 @@ static void DYFSInstallHooks(void) {
     DYFSLayoutInstallHooks();      // 全屏尺寸修正（0.3.15 逻辑）
     DYFSChromeInstallHooks();      // 底栏与进度条透明
     DYFSSettingsInstallHooks();    // 侧边栏入口与原生设置开关
+    DYFSTapDiagnosticInstallHooks(); // 轻量点击诊断（默认关闭，仅定位宫格错位用）
     // 去灰底（DYFSTransparency）没有独立 hook，
     // 由上述 layout hook 在布局完成后触发。
 
