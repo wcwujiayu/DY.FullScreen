@@ -41,6 +41,9 @@ void DYFSDetailTableLayout(id self, SEL cmd) {
     if (!DYFSIsEnabled()) return;
     UIView *root = [self isKindOfClass:UIViewController.class] ? ((UIViewController *)self).view : nil;
     DYFSTransparencyApplyInView(root);
+    // 打开瞬间底部会黑一下：黑板清理原本只挂在播放器 hook 上，第一帧播放器还没起来
+    // 就没清到。这里在详情页 VC 布局时提前清一次。
+    DYFSDetailFullscreenPass(root);
     // 表格也拉满：否则可视区仍是 843，视频被裁
     UIView *table = DYFSFindSubviewOfClass(root, @"AWEAwemeDetailTableView", 0);
     CGFloat winH = root.window ? CGRectGetHeight(root.window.bounds) : 0.0;
@@ -86,15 +89,14 @@ void DYFSInteractionControllerLayout(id self, SEL cmd) {
     CGFloat tabBarHeight = DYFSBottomTabBarHeight(view);
     CGFloat targetHeight = parentHeight - tabBarHeight;
 
-    if (!DYFSIsFeedCellInteractionController(controller)) {
-        // 父容器必须先到整屏才处理（父高 843 时算出 760 会把 UI 顶上去）；图文容器可能超整屏，故取 min
-        UIWindow *window = view.window;
-        CGFloat winH = window ? CGRectGetHeight(window.bounds) : 0.0;
-        BOOL inDetail = DYFSInProfileContext(view) || DYFSIsDetailVideoContext(view) ||
-                        DYFSIsIMDetailContext(view);
-        if (!inDetail || winH <= 0.0 || parentHeight < winH - MAX(2.0, tabBarHeight * 0.5)) return;
-        targetHeight = MIN(parentHeight, winH) - tabBarHeight;
-    }
+    // 只处理首页信息流 feed cell（0.3.15 的原版逻辑：互动层 = 父高 - 底栏）。
+    //
+    // ⚠️ 详情页（我-喜欢 / 我-作品 / 收藏 / 聊天分享）**不要在这里改互动层高度**：
+    // 抖音是按 cell 高度布局互动层内容的，cell 被拉到 926 后内容就分布在 926 内；
+    // 我们强行把互动层压到 843，内容会跑到 bounds 外面 —— 表现为「点赞 / 收藏 /
+    // 评论 / 头像不见了，账号文案也不见了」。而且这个值抖音下次布局还会改回去，
+    // 产生 843 / 926 混杂、时好时坏。互动层高度交给抖音自己跟随 cell。
+    if (!DYFSIsFeedCellInteractionController(controller)) return;
 
     CGRect frame = view.frame;
     CGFloat screenWidth = CGRectGetWidth(UIScreen.mainScreen.bounds);
