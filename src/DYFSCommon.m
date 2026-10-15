@@ -459,19 +459,33 @@ void DYFSClearOwnBackground(UIView *view) {
 #pragma mark - 底栏高度实测
 
 CGFloat DYFSBottomTabBarHeight(UIView *view) {
+    // 行高 hook / 各类布局回调都会调用这里，而它原本要遍历整棵 window 树
+    // （深度 14、每个节点一次 NSStringFromClass），放进高频路径会直接拖慢滑动。
+    // 窗口尺寸不变时底栏高度也不会变，缓存后命中率极高，开销降到 O(1)。
+    static CGFloat cachedHeight = 0.0;
+    static CGFloat cachedW = -1.0, cachedH = -1.0;
+
     UIWindow *window = view.window;
     if (!window) window = UIApplication.sharedApplication.windows.firstObject;
+    CGFloat w = window ? CGRectGetWidth(window.bounds) : 0.0;
+    CGFloat h = window ? CGRectGetHeight(window.bounds) : 0.0;
+    if (cachedHeight > 0.0 && fabs(cachedW - w) < 1.0 && fabs(cachedH - h) < 1.0) {
+        return cachedHeight;
+    }
+
+    CGFloat result = 83.0;
     if (window) {
         UIView *tabBar = DYFSFindSubviewOfClass(window, @"AWENormalModeTabBar", 0);
         CGFloat measured = CGRectGetHeight(tabBar.bounds);
-        if (tabBar && isfinite(measured) && measured >= 30.0 && measured < CGRectGetHeight(window.bounds)) {
-            return measured;
+        if (tabBar && isfinite(measured) && measured >= 30.0 && measured < h) {
+            result = measured;
+        } else {
+            result = 49.0 + MAX(0.0, window.safeAreaInsets.bottom);
         }
-        return 49.0 + MAX(0.0, window.safeAreaInsets.bottom);
     }
-    // 极端兜底：App 连 window 都拿不到。此时调用方也会因为 winH<=0 提前返回，
-    // 这个分支实际不可达，不参与任何判断逻辑。数值取「49 + 34」（全面屏底部安全区），
-    // 只为跟上面的正常返回值保持同量级，不是设备相关的判断条件。
-    return 83.0;
+    cachedHeight = result;
+    cachedW = w;
+    cachedH = h;
+    return result;
 }
 
