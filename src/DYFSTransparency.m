@@ -267,6 +267,9 @@ static void DYFSClearBottomBarChrome(UIView *reference) {
         // 接近底部即可：聊天分享 / 作品页的底栏胶囊不一定完全贴底（下方还有输入条）。
         if (CGRectGetMaxY(rect) < refH - 130.0) continue;
 
+        // 聊天输入栏与 IM 详情同处一个 window，按视图自身上下文排除（否则返回聊天底栏已透明）
+        if (DYFSIsChatConversationContext(view)) continue;
+
         if (DYFSSubtreeHasText(view, 0) || DYFSSubtreeHasControl(view, 0)) {
             DYFSClearOwnBackground(view);
             DYFSClearDarkChromeTree(view, 0);

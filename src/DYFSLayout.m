@@ -209,44 +209,53 @@ static void DYFSSchedulePlayerContentHeight(id playerController) {
     });
 }
 
-// 判断子树里是否有交互控件（看两层：互动层 -> 按钮）。
-// 用来在向上拉高视频画面时及时停手，避免把互动层一起拉到底栏上。
-static BOOL DYFSViewHasControlNearby(UIView *view) {
-    for (UIView *sub in view.subviews) {
-        if ([sub isKindOfClass:UIControl.class]) return YES;
-        for (UIView *inner in sub.subviews) {
-            if ([inner isKindOfClass:UIControl.class]) return YES;
-        }
-    }
-    return NO;
-}
-
-// 我-喜欢 / 我-作品 / 聊天分享的作品 / 详情页：视频画面同样撑满整屏，
-// 底部评论/输入栏由透明化覆盖在视频上。
-// 只拉「视频画面」这一条链，遇到含按钮的互动层就停 —— 互动层保持原高度，
-// 按钮与文案不会位移（0.4.15 修过的问题不能回归）。
-static void DYFSApplyDetailVideoFullscreen(UIView *contentView) {
-    if (!contentView || !DYFSIsEnabled()) return;
-    if (![contentView isKindOfClass:UIView.class]) return;
-    UIWindow *window = contentView.window;
+// 详情页（我-喜欢/我-作品/收藏/推荐/聊天分享）：视频撑满整屏。
+// 承载视频的 AWEAwemeDetailTableView 只有 843 高且 clipsToBounds=YES，会裁掉拉满的
+// 视频，底部 83pt 露出背后纯黑板 —— 这才是「底栏不透明」的根源。故把整宽且「正好
+// 差一个底栏高度」的容器链（cell / 表格 / 播放器）拉到整屏，并清掉纯黑底。
+static void DYFSApplyDetailFullscreen(UIView *root) {
+    if (!root || !DYFSIsEnabled()) return;
+    UIWindow *window = root.window;
     if (!window) return;
     CGFloat screenH = CGRectGetHeight(window.bounds);
-    if (screenH <= 1.0) return;
-    CGFloat tabH = DYFSBottomTabBarHeight(contentView);
+    CGFloat screenW = CGRectGetWidth(window.bounds);
+    if (screenH <= 1.0 || screenW <= 1.0) return;
+    CGFloat tabH = DYFSBottomTabBarHeight(root);
+    CGFloat tol = MAX(2.0, tabH * 0.5);
 
-    UIView *view = contentView;
-    for (NSUInteger depth = 0; view && depth < 8; depth++, view = view.superview) {
-        CGFloat h = CGRectGetHeight(view.frame);
-        if (h <= 1.0) break;
-        if (fabs(h - screenH) <= 0.5) break;                         // 已经整屏
-        if (fabs(screenH - h - tabH) > MAX(2.0, tabH * 0.5)) break;  // 不是「差一个底栏」
-        if (DYFSViewHasControlNearby(view)) break;                   // 互动层不拉高
+    // 向上：cell / 表格等祖先拉到整屏，并清掉纯黑不透明底
+    for (UIView *cursor = root; cursor; cursor = cursor.superview) {
+        if (CGRectGetWidth(cursor.bounds) < screenW * 0.9) continue;
+        if (fabs(screenH - CGRectGetHeight(cursor.bounds) - tabH) > tol) continue;
+        UIColor *bg = cursor.backgroundColor;
+        CGFloat r = 0, g = 0, b = 0, a = 0, white = 0;
+        BOOL ok = [bg getRed:&r green:&g blue:&b alpha:&a];
+        if (!ok && [bg getWhite:&white alpha:&a]) { r = g = b = white; ok = YES; }
+        if (ok && a > 0.9 && (0.299 * r + 0.587 * g + 0.114 * b) < 0.1) {
+            DYFSBackupAppearance(cursor);
+            cursor.backgroundColor = UIColor.clearColor;
+            cursor.layer.backgroundColor = UIColor.clearColor.CGColor;
+            cursor.opaque = NO;
+        }
+        CGRect frame = cursor.frame;
+        frame.size.height = screenH;
+        cursor.frame = frame;
+        DYFSLayoutFixCount++;
+    }
+
+    // 向下：播放器一侧同样补齐
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:root];
+    for (NSUInteger visited = 0; pending.count > 0 && visited < 200; visited++) {
+        UIView *view = pending.lastObject;
+        [pending removeLastObject];
+        [pending addObjectsFromArray:view.subviews];
+        if (view.hidden || view.alpha <= 0.01) continue;
+        if (CGRectGetWidth(view.bounds) < screenW * 0.9) continue;
+        if (fabs(screenH - CGRectGetHeight(view.bounds) - tabH) > tol) continue;
         CGRect frame = view.frame;
         frame.size.height = screenH;
         view.frame = frame;
         DYFSLayoutFixCount++;
-        DYFSLog([NSString stringWithFormat:@"detail fullscreen %@ height %.2f -> %.2f",
-                 NSStringFromClass(view.class), h, screenH]);
     }
 }
 
@@ -256,7 +265,7 @@ void DYFSPlayerContentLayoutA(id self, SEL cmd) {
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
     DYFSSchedulePlayerContentHeight(self);
-    DYFSApplyDetailVideoFullscreen(DYFSSafeValueForKey(self, @"contentView"));
+    DYFSApplyDetailFullscreen(root);
 }
 
 void DYFSPlayerContentLayoutB(id self, SEL cmd) {
@@ -265,7 +274,7 @@ void DYFSPlayerContentLayoutB(id self, SEL cmd) {
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
     DYFSSchedulePlayerContentHeight(self);
-    DYFSApplyDetailVideoFullscreen(DYFSSafeValueForKey(self, @"contentView"));
+    DYFSApplyDetailFullscreen(root);
 }
 
 void DYFSPlayerContentLayoutC(id self, SEL cmd) {
@@ -274,7 +283,7 @@ void DYFSPlayerContentLayoutC(id self, SEL cmd) {
     DYFSTransparencyApplyInView(root);
     if (root.superview) DYFSTransparencyApplyInView(root.superview);
     DYFSSchedulePlayerContentHeight(self);
-    DYFSApplyDetailVideoFullscreen(DYFSSafeValueForKey(self, @"contentView"));
+    DYFSApplyDetailFullscreen(root);
 }
 
 void DYFSElementStackLayout(id self, SEL cmd) {
