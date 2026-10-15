@@ -74,7 +74,7 @@ else
 fi
 
 echo "== 5. 模块划分完整性 =="
-for mod in DYFSCommon DYFSContext DYFSLayout DYFSChrome DYFSSettings DYFSTransparency; do
+for mod in DYFSCommon DYFSContext DYFSLayout DYFSChrome DYFSTransparency DYFSCardTransparency DYFSBottomChrome DYFSSettings; do
   if [ -f "src/$mod.h" ] && [ -f "src/$mod.m" ]; then
     ok "$mod.h / $mod.m 成对存在"
   else

@@ -100,3 +100,17 @@ void DYFSRestoreAllAppearance(void);
 
 // 命中率日志：几何阈值失配（去灰底悄悄失效）时打一条，方便定位。
 void DYFSNoteCardMiss(CGFloat width, CGFloat height, CGFloat refWidth);
+
+// ---------------------------------------------------------------------------
+// 视图探测与背景清除（原 DYFSTransparency 内部 static，
+// 0.5.7 拆分为「卡片去灰底」与「底栏清理」两个模块后提为共享）。
+// ---------------------------------------------------------------------------
+NSString *DYFSTextForView(UIView *view);
+BOOL DYFSIsCaptionDescriptionView(UIView *view);
+BOOL DYFSSubtreeHasCaptionDescription(UIView *view, NSUInteger depth);
+BOOL DYFSSubtreeHasText(UIView *view, NSUInteger depth);
+BOOL DYFSSubtreeHasControl(UIView *view, NSUInteger depth);
+BOOL DYFSIsNamedChrome(UIView *view);
+BOOL DYFSIsPlainBacking(UIView *view);
+BOOL DYFSIsDarkBackgroundView(UIView *view);
+void DYFSClearOwnBackground(UIView *view);

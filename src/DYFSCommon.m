@@ -308,3 +308,134 @@ void DYFSNoteCardMiss(CGFloat width, CGFloat height, CGFloat refWidth) {
         @"card threshold miss (w %.0f, h %.0f, refW %.0f) - 抖音改版可能导致去灰底失效",
         width, height, refWidth]);
 }
+
+#pragma mark - 视图探测与背景清除（两个透明化模块共用）
+
+NSString *DYFSTextForView(UIView *view) {
+    if (!view) return @"";
+    // YYLabel / YYText 等富文本 label 并不是 UILabel 子类，先用通用属性兜底。
+    if ([view respondsToSelector:@selector(attributedText)]) {
+        id attr = [view performSelector:@selector(attributedText)];
+        if ([attr isKindOfClass:NSAttributedString.class] && [(NSAttributedString *)attr length] > 0) {
+            return [(NSAttributedString *)attr string];
+        }
+    }
+    if ([view respondsToSelector:@selector(text)]) {
+        id text = [view performSelector:@selector(text)];
+        if ([text isKindOfClass:NSString.class] && [(NSString *)text length] > 0) {
+            return text;
+        }
+    }
+    if ([view isKindOfClass:UILabel.class]) {
+        UILabel *label = (UILabel *)view;
+        return label.attributedText.string ?: label.text ?: @"";
+    }
+    if ([view isKindOfClass:UITextField.class]) {
+        UITextField *field = (UITextField *)view;
+        return field.placeholder ?: field.text ?: @"";
+    }
+    if ([view isKindOfClass:UIButton.class]) {
+        return [(UIButton *)view titleForState:UIControlStateNormal] ?: @"";
+    }
+    return view.accessibilityLabel ?: @"";
+}
+
+// 视频文案 / 描述 label：这些视图的文字必须保留，不能被「去灰底」误清或误隐藏。
+BOOL DYFSIsCaptionDescriptionView(UIView *view) {
+    if (!view) return NO;
+    NSString *name = NSStringFromClass(view.class);
+    return [name containsString:@"Description"] ||
+        [name containsString:@"Caption"] ||
+        [name containsString:@"DescLabel"] ||
+        [name containsString:@"ContentText"];
+}
+
+// 判断以 view 为根的子树是否包含文案/描述视图（用于保护容器不被整层隐藏）。
+BOOL DYFSSubtreeHasCaptionDescription(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+    if (DYFSIsCaptionDescriptionView(view)) return YES;
+    for (UIView *sub in view.subviews) {
+        if (DYFSSubtreeHasCaptionDescription(sub, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+BOOL DYFSSubtreeHasText(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+    if ([DYFSTextForView(view) length] > 0) return YES;
+    for (UIView *sub in view.subviews) {
+        if (DYFSSubtreeHasText(sub, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+BOOL DYFSSubtreeHasControl(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return NO;
+    if ([view isKindOfClass:UIControl.class]) return YES;
+    NSString *name = NSStringFromClass(view.class);
+    if ([name containsString:@"Button"]) return YES;
+    for (UIView *sub in view.subviews) {
+        if (DYFSSubtreeHasControl(sub, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+BOOL DYFSIsNamedChrome(UIView *view) {
+    if (!view) return NO;
+    NSString *name = NSStringFromClass(view.class);
+    return [name containsString:@"EffectView"] ||
+        [view isKindOfClass:UIVisualEffectView.class] ||
+        [name containsString:@"Background"] || [name containsString:@"Backdrop"] ||
+        [name containsString:@"Blur"] || [name containsString:@"BackPlate"] ||
+        [name containsString:@"Material"] || [name isEqualToString:@"_UIBarBackground"];
+}
+
+BOOL DYFSIsPlainBacking(UIView *view) {
+    if (!view) return NO;
+    return DYFSIsNamedChrome(view) ||
+        [view isMemberOfClass:UIView.class] ||
+        [view isKindOfClass:UIImageView.class];
+}
+
+// DYYY 同款思路（DYYY.xm 15982）：贴底、深色纯背景的视图直接隐藏。
+// 之前只清 backgroundColor，对毛玻璃和重新绘制的背景无效，
+// 这里补一条按视觉特征处理的兜底路径。
+BOOL DYFSIsDarkBackgroundView(UIView *view) {
+    if (!view) return NO;
+    UIColor *color = view.backgroundColor;
+    if (!color) return NO;
+    CGFloat r = 0, g = 0, b = 0, a = 0, white = 0;
+    BOOL ok = [color getRed:&r green:&g blue:&b alpha:&a];
+    if (!ok && [color getWhite:&white alpha:&a]) { r = g = b = white; ok = YES; }
+    if (!ok || a <= 0.01) return NO;
+    CGFloat luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    return luminance < 0.3;
+}
+
+void DYFSClearOwnBackground(UIView *view) {
+    if (!view) return;
+    DYFSBackupAppearance(view);
+    // 毛玻璃底栏（图 2 / 图 3 的黑色半透明）靠 effect 渲染，
+    // 清 backgroundColor 无效；置 nil 后 contentView 里的内容仍然保留。
+    if ([view isKindOfClass:UIVisualEffectView.class]) {
+        ((UIVisualEffectView *)view).effect = nil;
+        return;
+    }
+    view.backgroundColor = UIColor.clearColor;
+    view.layer.backgroundColor = UIColor.clearColor.CGColor;
+    view.opaque = NO;
+
+    // 部分卡片用渐变/形状子层而不是 backgroundColor 铺底；
+    // 只清覆盖大部分区域的子层，图标等小 layer 不受影响。
+    CGFloat w = CGRectGetWidth(view.bounds), h = CGRectGetHeight(view.bounds);
+    for (CALayer *layer in [view.layer.sublayers copy]) {
+        CGFloat lw = CGRectGetWidth(layer.frame), lh = CGRectGetHeight(layer.frame);
+        if (w <= 0 || h <= 0 || lw < w * 0.6 || lh < h * 0.5) continue;
+        layer.backgroundColor = UIColor.clearColor.CGColor;
+        if ([layer isKindOfClass:CAGradientLayer.class]) {
+            ((CAGradientLayer *)layer).colors = nil;
+        } else if ([layer isKindOfClass:CAShapeLayer.class]) {
+            ((CAShapeLayer *)layer).fillColor = UIColor.clearColor.CGColor;
+        }
+    }
+}
