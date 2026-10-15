@@ -412,6 +412,22 @@ BOOL DYFSIsDarkBackgroundView(UIView *view) {
     return luminance < 0.3;
 }
 
+// 只把「纯黑不透明」底板清成透明：改颜色，绝不改 frame，因此不会造成布局位移。
+void DYFSClearOpaqueBlackBackground(UIView *view) {
+    if (!view) return;
+    UIColor *bg = view.backgroundColor;
+    if (!bg) return;
+    CGFloat r = 0, g = 0, b = 0, a = 0, white = 0;
+    BOOL ok = [bg getRed:&r green:&g blue:&b alpha:&a];
+    if (!ok && [bg getWhite:&white alpha:&a]) { r = g = b = white; ok = YES; }
+    if (!ok || a < 0.9) return;
+    if ((0.299 * r + 0.587 * g + 0.114 * b) >= 0.1) return;
+    DYFSBackupAppearance(view);
+    view.backgroundColor = UIColor.clearColor;
+    view.layer.backgroundColor = UIColor.clearColor.CGColor;
+    view.opaque = NO;
+}
+
 void DYFSClearOwnBackground(UIView *view) {
     if (!view) return;
     DYFSBackupAppearance(view);
