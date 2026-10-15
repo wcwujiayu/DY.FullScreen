@@ -3,8 +3,18 @@
 //  DY.FullScreen
 //
 //  轻量点击诊断：定位「我-喜欢 / 收藏 / 我-作品」宫格页「点 N 打开 N+1」。
-//  点宫格时记录 indexPath + 屏幕坐标；详情页打开时记录实际加载的 awemeId。
+//  点宫格时记录 indexPath + 屏幕坐标 + 列表 awemeId；详情页打开时记录实际加载的
+//  awemeId，并与上一次宫格点对比，给出「一致 / 不一致」判定。
 //  默认关闭，由诊断页开关启用，不进入任何高频路径，不影响正常布局。
+//
+//  0.5.17 重写：
+//   · 去掉原来脆弱的「可见 cell 必须叫 AWEUserWorkCollectionViewComponentCell」闸门
+//     （40.7.0 宫格 cell 类名未必命中 → 整段静默跳过，横幅从不出现）。
+//     本 hook 只挂在 AWEDCFeedListViewController 上，它本身就是 profile/喜欢/收藏
+//     宫格，直接显示即可。
+//   · 原来「宫格点」与「详情打开」用同一个 label、各 4s 隐藏 → 详情横幅瞬间覆盖
+//     宫格横幅，且 keyWindow 切换时可能不渲染。改为：单个持久 label，每次事件更新
+//     文本并统一 8s 隐藏，挂到最上层窗口并置顶。详情横幅会合并显示上一次宫格点的信息。
 //
 
 #import "DYFSTapDiagnostic.h"
@@ -15,6 +25,11 @@
 static BOOL gTapDiagEnabled = NO;
 static UILabel *gTapDiagLabel = nil;
 static NSTimeInterval gTapDiagLastShow = 0;
+
+// 上一次宫格点击记录（用于与详情对比）
+static NSString *gLastGridItem = nil;     // @"sec,item"
+static NSString *gLastGridListAid = nil;  // 列表 awemeId
+static NSTimeInterval gLastGridTime = 0;
 
 BOOL DYFSTapDiagnosticEnabled(void) { return gTapDiagEnabled; }
 void DYFSTapDiagnosticSetEnabled(BOOL enabled) { gTapDiagEnabled = enabled; }
@@ -74,15 +89,24 @@ static NSString *DYFSDetailAwemeID(id self) {
     return nil;
 }
 
-#pragma mark - 屏幕横幅
+#pragma mark - 屏幕横幅（单个持久 label）
+
+// 选最上层、可见的窗口（优先 keyWindow，否则取最高 windowLevel）
+static UIWindow *DYFSTopWindow(void) {
+    UIWindow *key = nil;
+    UIWindow *best = nil;
+    UIWindowLevel bestLevel = -CGFLOAT_MAX;
+    for (UIWindow *w in UIApplication.sharedApplication.windows) {
+        if (w.isKeyWindow) key = w;
+        if (w.hidden || w.alpha <= 0.01) continue;
+        if (w.windowLevel >= bestLevel) { bestLevel = w.windowLevel; best = w; }
+    }
+    return key ?: best;
+}
 
 static void DYFSShowTapDiag(NSString *text) {
     if (!text.length) return;
-    UIWindow *win = nil;
-    for (UIWindow *w in UIApplication.sharedApplication.windows) {
-        if (w.isKeyWindow) { win = w; break; }
-    }
-    if (!win) win = UIApplication.sharedApplication.windows.firstObject;
+    UIWindow *win = DYFSTopWindow();
     if (!win) return;
 
     if (!gTapDiagLabel) {
@@ -90,65 +114,79 @@ static void DYFSShowTapDiag(NSString *text) {
         gTapDiagLabel.numberOfLines = 0;
         gTapDiagLabel.font = [UIFont boldSystemFontOfSize:13];
         gTapDiagLabel.textColor = UIColor.whiteColor;
-        gTapDiagLabel.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.82];
+        gTapDiagLabel.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.85];
         gTapDiagLabel.textAlignment = NSTextAlignmentLeft;
         gTapDiagLabel.layer.cornerRadius = 8;
         gTapDiagLabel.clipsToBounds = YES;
         gTapDiagLabel.adjustsFontSizeToFitWidth = NO;
+        gTapDiagLabel.userInteractionEnabled = NO;
     }
-    [win addSubview:gTapDiagLabel];
-    gTapDiagLabel.text = text;
-    CGSize maxSize = CGSizeMake(win.bounds.size.width - 24, 200);
-    CGSize sz = [gTapDiagLabel sizeThatFits:maxSize];
-    CGFloat x = 12, y = 60;
-    gTapDiagLabel.frame = CGRectMake(x, y, MIN(sz.width + 16, maxSize.width), sz.height + 12);
+    // 始终挂到当前最上层窗口并置顶，避免跨窗口/层级被盖住
+    if (gTapDiagLabel.superview != win) [win addSubview:gTapDiagLabel];
+    [win bringSubviewToFront:gTapDiagLabel];
 
+    gTapDiagLabel.text = text;
+    CGSize maxSize = CGSizeMake(win.bounds.size.width - 24, 240);
+    CGSize sz = [gTapDiagLabel sizeThatFits:maxSize];
+    CGFloat x = 12, y = 64;
+    gTapDiagLabel.frame = CGRectMake(x, y, MIN(sz.width + 16, maxSize.width), sz.height + 12);
     gTapDiagLabel.alpha = 1.0;
     gTapDiagLabel.hidden = NO;
+
     gTapDiagLastShow = CACurrentMediaTime();
     [NSObject cancelPreviousPerformRequestsWithTarget:gTapDiagLabel];
-    [gTapDiagLabel performSelector:@selector(setHidden:) withObject:@YES afterDelay:4.0];
+    [gTapDiagLabel performSelector:@selector(setHidden:) withObject:@YES afterDelay:8.0];
 }
 
-#pragma mark - hook：宫格点击
+#pragma mark - hook：宫格点击（AWEDCFeedListViewController）
 
 static IMP gOrigGridSelect = NULL;
 static void DYFSTapDiagGridSelect(id self, SEL cmd, UICollectionView *cv, NSIndexPath *ip) {
-    if (gTapDiagEnabled) {
-        // 仅对 profile 宫格（AWEUserWorkCollectionViewComponentCell）生效
-        BOOL isProfileGrid = NO;
-        for (UICollectionViewCell *c in cv.visibleCells) {
-            if ([NSStringFromClass(c.class) containsString:@"AWEUserWorkCollectionViewComponentCell"]) {
-                isProfileGrid = YES; break;
-            }
-        }
-        if (isProfileGrid) {
-            CGRect wr = CGRectZero;
-            UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
-            if (cell) wr = [cell convertRect:cell.bounds toView:nil];
-            NSString *aid = DYFSGridAwemeID(self, ip);
-            NSString *msg = [NSString stringWithFormat:
-                @"[宫格点] item=(%ld,%ld) 屏(x=%.0f,y=%.0f) 列表aweme=%@\n点开后看详情是否一致",
-                (long)ip.section, (long)ip.item, CGRectGetMidX(wr), CGRectGetMidY(wr),
-                aid ?: @"n/a"];
-            DYFSShowTapDiag(msg);
-        }
-    }
     if (gOrigGridSelect) ((void (*)(id, SEL, UICollectionView *, NSIndexPath *))gOrigGridSelect)(self, cmd, cv, ip);
+
+    if (!gTapDiagEnabled) return;
+
+    // 本 hook 只挂在 AWEDCFeedListViewController（profile/喜欢/收藏宫格），直接收集信息。
+    CGRect wr = CGRectZero;
+    UICollectionViewCell *cell = [cv cellForItemAtIndexPath:ip];
+    if (cell) wr = [cell convertRect:cell.bounds toView:nil];
+    NSString *aid = DYFSGridAwemeID(self, ip);
+
+    gLastGridItem = [NSString stringWithFormat:@"%ld,%ld", (long)ip.section, (long)ip.item];
+    gLastGridListAid = aid;
+    gLastGridTime = CACurrentMediaTime();
+
+    NSString *msg = [NSString stringWithFormat:
+        @"[宫格点] item=(%@) 屏(x=%.0f,y=%.0f)\n列表aweme=%@\n（点开后看详情是否一致）",
+        gLastGridItem, CGRectGetMidX(wr), CGRectGetMidY(wr), aid ?: @"n/a"];
+    DYFSShowTapDiag(msg);
 }
 
-#pragma mark - hook：详情打开
+#pragma mark - hook：详情打开（AWEAwemeDetailTableViewController）
 
 static IMP gOrigDetailAppear = NULL;
 static void DYFSTapDiagDetailAppear(id self, SEL cmd, BOOL animated) {
     if (gOrigDetailAppear) ((void (*)(id, SEL, BOOL))gOrigDetailAppear)(self, cmd, animated);
-    if (gTapDiagEnabled) {
-        NSString *aid = DYFSDetailAwemeID(self);
-        if (aid) {
-            NSString *msg = [NSString stringWithFormat:@"[详情打开] aweme=%@\n对比上面的「列表aweme」", aid];
-            DYFSShowTapDiag(msg);
+    if (!gTapDiagEnabled) return;
+
+    NSString *aid = DYFSDetailAwemeID(self);
+    if (!aid) return;
+
+    // 与「上一次宫格点」对比（4s 内视为同一次点击流程）
+    NSTimeInterval dt = CACurrentMediaTime() - gLastGridTime;
+    NSString *verdict = @"";
+    if (gLastGridListAid && gLastGridTime > 0 && dt < 4.0) {
+        if (gLastGridListAid.length && [gLastGridListAid isEqualToString:aid]) {
+            verdict = @"  ✅一致";
+        } else {
+            verdict = [NSString stringWithFormat:@"  ❌不一致(宫格=%@)", gLastGridListAid ?: @"n/a"];
         }
     }
+
+    NSString *msg = [NSString stringWithFormat:
+        @"[详情] aweme=%@%@\n[上一次宫格点] item=%@ 列表=%@",
+        aid, verdict, gLastGridItem ?: @"?", gLastGridListAid ?: @"n/a"];
+    DYFSShowTapDiag(msg);
 }
 
 #pragma mark - 安装
